@@ -136,6 +136,19 @@ def _cached_user_pnl(snapshot_date: str, data_root: str, mode_filter: str | None
     return compute_user_pnl(ds, exclude_system_users=exclude_system)
 
 
+# 페이지 헤더의 KPI — 사이드바 위젯 바뀔 때마다 가장 자주 재계산되던 무거운
+# 부분. 캐싱 + spinner 로 묶어서 사용자에게 진행 표시.
+@st.cache_data(show_spinner="📊 헤더 KPI 계산 중…", max_entries=20)
+def _cached_header_kpi(snapshot_date: str, data_root: str, mode_filter: str | None,
+                       exclude_system: bool, start_iso: str, end_iso: str):
+    ds = load_snapshot(snapshot_date, data_root=data_root)
+    if mode_filter:
+        ds = ds.filter_by_game_mode(mode_filter)
+    if start_iso and end_iso:
+        ds = ds.filter_by_date_range(start_iso, end_iso)
+    return compute_kpi_summary(ds, exclude_system_users=exclude_system)
+
+
 def _fmt_int(v) -> str:
     if v is None or pd.isna(v):
         return "—"
@@ -220,12 +233,18 @@ mode = st.sidebar.radio(
 )
 
 filter_caption = ""
+ds_start_iso = ""
+ds_end_iso = ""
+ds_snapshot_for_cache = latest_choice
+
 if mode == "단일 스냅샷":
     selected_snapshot = st.sidebar.selectbox(
         "스냅샷 일자", snapshots, index=len(snapshots) - 1
     )
-    base_ds = _cached_snapshot(selected_snapshot, data_root)
-    ds = base_ds
+    ds_snapshot_for_cache = selected_snapshot
+    with st.spinner("⏳ 스냅샷 슬라이스 적용 중…"):
+        base_ds = _cached_snapshot(selected_snapshot, data_root)
+        ds = base_ds
     filter_caption = f"스냅샷 **{selected_snapshot}** (누적 데이터)"
 
 elif mode == "단일 날짜":
@@ -235,8 +254,10 @@ elif mode == "단일 날짜":
         min_value=min_date,
         max_value=max_date,
     )
-    base_ds = latest_ds
-    ds = base_ds.filter_by_date_range(chosen, chosen)
+    with st.spinner(f"⏳ {chosen} 하루치 데이터 슬라이스 중…"):
+        base_ds = latest_ds
+        ds = base_ds.filter_by_date_range(chosen, chosen)
+    ds_start_iso = ds_end_iso = chosen.isoformat()
     filter_caption = f"**{chosen}** 하루치 (스냅샷 {latest_choice} 기준)"
 
 else:  # 날짜 범위
@@ -253,8 +274,11 @@ else:  # 날짜 범위
         start_d, end_d = chosen_range
     else:
         start_d = end_d = chosen_range  # type: ignore[assignment]
-    base_ds = latest_ds
-    ds = base_ds.filter_by_date_range(start_d, end_d)
+    with st.spinner(f"⏳ {start_d} ~ {end_d} 데이터 슬라이스 중…"):
+        base_ds = latest_ds
+        ds = base_ds.filter_by_date_range(start_d, end_d)
+    ds_start_iso = start_d.isoformat()
+    ds_end_iso = end_d.isoformat()
     filter_caption = f"**{start_d} ~ {end_d}** (스냅샷 {latest_choice} 기준)"
 
 st.sidebar.markdown("### 계정 필터")
@@ -285,8 +309,9 @@ selected_game_mode = st.sidebar.radio(
 mode_filter_for_ds = None if selected_game_mode == "전체" else selected_game_mode
 
 # 사이드바 선택을 ds에 실제로 적용 (날짜 슬라이스가 끝난 뒤).
-ds = _apply_mode_filter(ds, mode_filter_for_ds)
 if mode_filter_for_ds:
+    with st.spinner(f"⏳ {mode_filter_for_ds} 모드 필터 적용 중…"):
+        ds = _apply_mode_filter(ds, mode_filter_for_ds)
     filter_caption += f"  ·  모드 **{mode_filter_for_ds}** 만"
 
 exclude_system = st.sidebar.checkbox(
@@ -313,7 +338,10 @@ if latest_ds.system_user_ids:
 # 헤더 KPI
 # ---------------------------------------------------------------------------
 
-kpi = compute_kpi_summary(ds, exclude_system_users=exclude_system)
+kpi = _cached_header_kpi(
+    ds_snapshot_for_cache, data_root, mode_filter_for_ds, exclude_system,
+    ds_start_iso, ds_end_iso,
+)
 
 st.title("PIKIT 베타 밸런스 대시보드")
 st.caption(
