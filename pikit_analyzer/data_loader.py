@@ -10,7 +10,9 @@ tx_type, direction, source_id 등) — 다른 모든 분석 코드가 이 이름
 """
 from __future__ import annotations
 
+import hashlib
 import os
+import pickle
 import re
 # `dataclasses` is intentionally avoided — Python 3.14 has a regression where
 # `@dataclass` on a class with `from __future__ import annotations` triggers
@@ -23,6 +25,31 @@ from pathlib import Path
 from typing import Iterable
 
 import pandas as pd
+
+
+def _resolve_cache_dir() -> Path | None:
+    """디스크 캐시 폴더 — 컨테이너의 /app/cache 또는 PIKIT_CACHE_DIR 환경변수.
+
+    None 을 반환하면 캐시 비활성 (개발 환경 등).
+    """
+    env = os.environ.get("PIKIT_CACHE_DIR", "").strip()
+    if env:
+        p = Path(env).expanduser()
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+            return p
+        except OSError:
+            return None
+    container_cache = Path("/app/cache")
+    if container_cache.exists() and os.access(container_cache, os.W_OK):
+        return container_cache
+    return None
+
+
+CACHE_DIR = _resolve_cache_dir()
+# pickle 파일 호환성 보호 — 코드가 바뀌어 deserialize 가 실패하면 cache 무효화.
+# 새 필드 추가하거나 구조 바꿀 때 이 값을 올리면 옛 캐시 자동 무시됨.
+CACHE_VERSION = 2
 
 def _resolve_default_data_root() -> Path:
     """Pick the default data folder.
@@ -533,14 +560,74 @@ def list_snapshot_dates(data_root: Path = DEFAULT_DATA_ROOT) -> list[str]:
     return sorted(dates)
 
 
+def _snapshot_cache_key(snap_dir: Path) -> str:
+    """캐시 키 = 스냅샷 폴더의 모든 CSV mtime + size 의 해시.
+
+    파일이 하나라도 바뀌면 키가 바뀌어 캐시가 자동 무효화됨.
+    """
+    parts: list[str] = [f"v{CACHE_VERSION}"]
+    for f in sorted(snap_dir.glob("*.csv")):
+        try:
+            stat = f.stat()
+            parts.append(f"{f.name}:{int(stat.st_mtime)}:{stat.st_size}")
+        except OSError:
+            continue
+    digest = hashlib.sha1("|".join(parts).encode()).hexdigest()[:16]
+    return f"snapshot_{snap_dir.name}_{digest}"
+
+
 @lru_cache(maxsize=2)  # 동일 스냅샷 인스턴스 누적 방지 (Cloud 1GB 한도)
 def load_snapshot(snapshot_date: str, data_root: str | None = None) -> PikitDataset:
-    """Load a single daily snapshot identified by its folder name."""
+    """Load a single daily snapshot identified by its folder name.
+
+    캐싱 계층 두 단계:
+      1. lru_cache (메모리) — 동일 인자 재호출 시 즉시 반환.
+      2. /app/cache 의 pickle (디스크) — 컨테이너 재시작 후에도 보존.
+         CSV mtime 이 바뀌면 자동 무효화. (~ 5초 → 0.2초)
+    """
     root = Path(data_root) if data_root else DEFAULT_DATA_ROOT
     snap_dir = root / snapshot_date
     if not snap_dir.exists():
         raise FileNotFoundError(f"Snapshot not found: {snap_dir}")
 
+    # ---- 디스크 캐시 hit 시 즉시 반환 ----
+    if CACHE_DIR is not None:
+        try:
+            cache_file = CACHE_DIR / f"{_snapshot_cache_key(snap_dir)}.pkl"
+            if cache_file.exists():
+                with cache_file.open("rb") as fh:
+                    cached = pickle.load(fh)
+                # 캐시는 PikitDataset 인스턴스만 저장. 클래스가 바뀌었으면 fresh load.
+                if isinstance(cached, PikitDataset):
+                    return cached
+        except (OSError, pickle.UnpicklingError, AttributeError, EOFError):
+            # 손상된 캐시 — 무시하고 fresh load 후 덮어쓰기.
+            pass
+
+    ds = _load_snapshot_from_csv(snap_dir, snapshot_date)
+
+    # ---- 디스크 캐시 저장 (best-effort) ----
+    if CACHE_DIR is not None:
+        try:
+            # 옛 캐시 정리 — 같은 snapshot_date 의 옛 mtime 파일 제거.
+            for old in CACHE_DIR.glob(f"snapshot_{snapshot_date}_*.pkl"):
+                try:
+                    old.unlink()
+                except OSError:
+                    pass
+            cache_file = CACHE_DIR / f"{_snapshot_cache_key(snap_dir)}.pkl"
+            tmp = cache_file.with_suffix(".pkl.tmp")
+            with tmp.open("wb") as fh:
+                pickle.dump(ds, fh, protocol=pickle.HIGHEST_PROTOCOL)
+            tmp.replace(cache_file)  # 원자적 교체
+        except OSError:
+            pass
+
+    return ds
+
+
+def _load_snapshot_from_csv(snap_dir: Path, snapshot_date: str) -> PikitDataset:
+    """캐시 무관, 모든 CSV 를 새로 읽어 PikitDataset 을 생성. 내부용."""
     blocks = _read_csv(snap_dir / "block.csv", BLOCK_COLS, BLOCK_RENAME)
     blocks = _to_numeric(blocks, ["block_id", "drop_rate", "hp", "reward"])
     blocks = _to_datetime(blocks, ["created_at", "updated_at"])

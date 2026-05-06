@@ -669,66 +669,82 @@ def compute_per_summon_returns(
 
     items = ds.items[
         ["item_id", "name", "mode", "category", "price", "attack", "duration_ms"]
-    ].rename(columns={"name": "item_name"}).set_index("item_id")
+    ].rename(columns={"name": "item_name"})
 
-    tx = tx.copy()
-    tx["abs_amount"] = tx["amount"].abs()
-    tx = tx.sort_values(["user_id", "created_at"])
+    purchases = tx[tx["tx_type"] == "ITEM_PURCHASE"]
+    if purchases.empty:
+        return pd.DataFrame()
 
-    purchases = tx[tx["tx_type"] == "ITEM_PURCHASE"].copy()
-    rewards = tx[tx["tx_type"] == "BLOCK_REWARD"].copy()
+    # ---- 구매 행 가공 (벡터화) ----
+    purchases = purchases[["user_id", "created_at", "source_id", "amount"]].copy()
+    purchases["item_id"] = pd.to_numeric(
+        purchases["source_id"], errors="coerce"
+    ).astype("Int64")
+    purchases = purchases.dropna(subset=["item_id"])
+    purchases["item_id"] = purchases["item_id"].astype(int)
+    # item 정보 조인 (없는 item_id 는 자연스럽게 inner join 으로 제거됨)
+    purchases = purchases.merge(items, on="item_id", how="inner")
     if purchases.empty:
         return pd.DataFrame()
 
     purchases = purchases.sort_values(["user_id", "created_at"]).reset_index(drop=True)
+
+    # 윈도우 끝 시각 = min(다음 구매, 구매+duration). next 가 NaT 이면 duration 만.
+    purchases["t_buy"] = purchases["created_at"]
     purchases["next_purchase_at"] = purchases.groupby("user_id")["created_at"].shift(-1)
-    purchases["item_id_int"] = purchases["source_id"].astype("Int64")
+    duration_td = pd.to_timedelta(purchases["duration_ms"].fillna(0), unit="ms")
+    purchases["t_dur_end"] = purchases["t_buy"] + duration_td
+    nxt = purchases["next_purchase_at"]
+    dur = purchases["t_dur_end"]
+    # next < dur 면 next, 아니면 dur (next NaT 이면 비교가 False → dur).
+    purchases["t_end"] = nxt.where(nxt < dur, dur)
 
-    rewards_by_user = {uid: g.sort_values("created_at") for uid, g in rewards.groupby("user_id")}
+    # ---- 보상 행 가공 + 유저별 prefix-sum ----
+    rewards = tx[tx["tx_type"] == "BLOCK_REWARD"][
+        ["user_id", "created_at", "amount"]
+    ].copy()
+    rewards["abs_amount"] = rewards["amount"].abs().astype(np.float64)
+    rewards = rewards.sort_values(["user_id", "created_at"]).reset_index(drop=True)
 
-    rows = []
-    for _, p in purchases.iterrows():
-        uid = int(p["user_id"])
-        item_id_int = p["item_id_int"]
-        if pd.isna(item_id_int):
-            continue
-        item_id = int(item_id_int)
-        if item_id not in items.index:
-            continue
-        info = items.loc[item_id]
-        duration_ms = float(info["duration_ms"]) if pd.notna(info["duration_ms"]) else 0
-        t_buy = p["created_at"]
-        t_dur_end = t_buy + pd.Timedelta(milliseconds=duration_ms) if duration_ms else t_buy
-        t_next = p["next_purchase_at"]
-        t_end = min(t_next, t_dur_end) if pd.notna(t_next) else t_dur_end
+    gross = np.zeros(len(purchases), dtype=np.float64)
+    if not rewards.empty:
+        # 유저별 cumulative sum + searchsorted 로 [t_buy, t_end) 구간 합을 O(log N) 로.
+        # 외부 루프는 유저(보통 수십~수백명) 하나당 한 번 — 행 단위 iterrows 의 O(M) 보다
+        # 압도적으로 빠름 (M = 구매 수, 수만~수십만).
+        purchases_uid = purchases["user_id"].to_numpy()
+        p_buy = purchases["t_buy"].to_numpy()
+        p_end = purchases["t_end"].to_numpy()
+        for uid, r_grp in rewards.groupby("user_id", sort=False):
+            mask = purchases_uid == uid
+            if not mask.any():
+                continue
+            r_times = r_grp["created_at"].to_numpy()
+            r_cum = np.empty(len(r_grp) + 1, dtype=np.float64)
+            r_cum[0] = 0.0
+            np.cumsum(r_grp["abs_amount"].to_numpy(), out=r_cum[1:])
+            idx_buy = np.searchsorted(r_times, p_buy[mask], side="left")
+            idx_end = np.searchsorted(r_times, p_end[mask], side="left")
+            gross[mask] = r_cum[idx_end] - r_cum[idx_buy]
 
-        user_rewards = rewards_by_user.get(uid)
-        gross = 0.0
-        if user_rewards is not None:
-            mask = (user_rewards["created_at"] >= t_buy) & (user_rewards["created_at"] < t_end)
-            gross = float(user_rewards.loc[mask, "abs_amount"].sum())
+    purchases["gross_reward"] = gross
+    price_safe = purchases["price"].astype(np.float64).fillna(0.0)
+    purchases["price"] = price_safe
+    purchases["net_pnl"] = gross - price_safe.to_numpy()
+    # ROI: price 가 양수일 때만, 아니면 NaN.
+    purchases["roi"] = np.where(
+        price_safe > 0,
+        purchases["net_pnl"].to_numpy() / price_safe.to_numpy(),
+        np.nan,
+    )
 
-        price = float(info["price"]) if pd.notna(info["price"]) else 0
-        net = gross - price
-        roi = (net / price) if price > 0 else None
-
-        rows.append({
-            "user_id": uid,
-            "item_id": item_id,
-            "item_name": info["item_name"],
-            "mode": info["mode"],
-            "category": info["category"],
-            "price": price,
-            "attack": float(info["attack"]) if pd.notna(info["attack"]) else None,
-            "duration_ms": duration_ms,
-            "purchased_at": t_buy,
-            "ended_at": t_end,
-            "gross_reward": gross,
-            "net_pnl": net,
-            "roi": roi,
-        })
-
-    return pd.DataFrame(rows)
+    return purchases[
+        [
+            "user_id", "item_id", "item_name", "mode", "category",
+            "price", "attack", "duration_ms",
+            "t_buy", "t_end",
+            "gross_reward", "net_pnl", "roi",
+        ]
+    ].rename(columns={"t_buy": "purchased_at", "t_end": "ended_at"}).reset_index(drop=True)
 
 
 def summarize_per_summon(per_summon: pd.DataFrame) -> pd.DataFrame:

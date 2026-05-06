@@ -23,9 +23,12 @@ services:
       - "8501:8501"
 
     volumes:
-      # 데이터 폴더 — NAS 에서 직접 파일 추가하면 즉시 반영.
+      # 데이터 폴더 — NAS 에서 직접 파일 추가하면 즉시 반영. 컨테이너는 read-only.
       # 처음에 /volume1/docker/pikit/data/2026.05.06/ 같은 폴더 만들어 두면 됨.
       - ./data:/app/data:ro
+      # 캐시 볼륨 — Parquet/pickle 캐시. 컨테이너 재시작 후에도 보존되어
+      # CSV 파싱 오버헤드 (수 초) 를 0.2초로 단축. 자동 생성됨.
+      - ./cache:/app/cache:rw
 
     environment:
       # 공개 모드 — 사이드바에서 데이터 경로 입력칸 숨김 + raw CSV 다운로드 비활성화.
