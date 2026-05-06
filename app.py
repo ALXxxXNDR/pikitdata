@@ -1098,32 +1098,34 @@ with tab_summon:
 # -------- ⏱️ 시간대별 PNL 탭 (재작성) --------
 with tab_hourly:
     # pre-emit 슬롯 (탭 선언 직후 이미 그려둔 박스/진행바) 를 사용.
-    # alias 로 기존 변수명 유지하여 아래 로직은 그대로 동작.
     top_loading_slot = _hourly_box
     progress_slot = _hourly_progress
-    progress_bar = _hourly_progress.progress(15, text="15% — 유저 목록 로딩")
+    progress_bar = _hourly_progress.progress(15, text="15% — 컨트롤 렌더링")
 
     st.subheader("시간대별 PNL — 지갑 단위 + 시·분 단위 분석")
     st.write(
-        "지갑(주소)을 골라 분 단위 시간과 시·분 단위 기간을 설정하고 PNL 추이를 봅니다. "
-        "선택한 지갑만 필터해서 계산하므로 첫 번째 호출 후엔 캐시 적중으로 즉시 반환됩니다."
+        "지갑/날짜/시간 단위를 정한 다음 **데이터셋 불러오기** 버튼을 누르면 차트와 CSV 가 만들어집니다. "
+        "탭 진입만으로는 무거운 계산을 돌리지 않아요."
     )
 
-    _t_min, _t_max = ds.transaction_date_range
-    if _t_min is None:
-        _t_min = _t_max = date.today()
-    pnl_for_picker = _cached_user_pnl(
-        latest_choice, data_root, mode_filter_for_ds, exclude_system,
-        _t_min.isoformat(), _t_max.isoformat(),
-    )
-    progress_bar.progress(35, text="35% — 유저 목록 준비 완료, 컨트롤 렌더링")
+    # ds.users 로 picker 후보 — 가벼운 user 메타만 필요. PNL 계산은 버튼 클릭 시 수행.
+    users_for_picker = ds.users.copy() if ds.users is not None else pd.DataFrame()
+    blocked_picker = list(ds.quest_user_ids)
+    if exclude_system:
+        blocked_picker += list(ds.system_user_ids)
+    if blocked_picker and not users_for_picker.empty:
+        users_for_picker = users_for_picker[
+            ~users_for_picker["user_id"].isin(blocked_picker)
+        ].reset_index(drop=True)
 
-    if pnl_for_picker.empty:
+    progress_bar.progress(35, text="35% — 유저 목록 준비 완료")
+
+    if users_for_picker.empty:
         top_loading_slot.empty()
         progress_slot.empty()
-        st.info("선택된 모드/기간에 트랜잭션이 있는 유저가 없습니다.")
+        st.info("표시할 유저가 없습니다.")
     else:
-        # 봇 세트 선택 — 어느 set 의 봇들을 🤖 로 강조 + 기본 선택할지.
+        # 봇 세트 선택
         set_names = list(BOT_SETS.keys())
         default_set_idx = (
             set_names.index(DEFAULT_BOT_SET) if DEFAULT_BOT_SET in set_names else 0
@@ -1134,29 +1136,33 @@ with tab_hourly:
             index=default_set_idx,
             horizontal=True,
             help=(
-                "선택한 세트에 속한 지갑들이 🤖 로 표시되고 기본 선택됩니다. "
-                "세트 추가는 코드의 BOT_SETS 에 entry 만 추가하면 됩니다 (C-Bot-set, D-Bot-set ...)."
+                "선택한 세트의 지갑이 🤖 로 표시되고 기본 멀티셀렉트 됩니다. "
+                "세트 추가는 코드의 BOT_SETS 에 entry 만 더하면 됩니다."
             ),
             key="hourly_bot_set",
         )
-        active_bots = resolve_bot_set(selected_set, pnl_for_picker)
+        active_bots = resolve_bot_set(selected_set, users_for_picker)
 
+        total_set_size = len(
+            BOT_SETS[selected_set].get("user_ids")
+            or BOT_SETS[selected_set].get("wallets")
+            or []
+        )
         if active_bots:
             st.caption(
-                f"✓ {selected_set} — 데이터에서 {len(active_bots)}/"
-                f"{len(BOT_SETS[selected_set].get('user_ids') or BOT_SETS[selected_set].get('wallets') or [])}"
-                "개 매칭됨"
+                f"✓ {selected_set} — 데이터에서 {len(active_bots)}/{total_set_size} 개 매칭됨"
             )
         else:
             st.caption(f"⚠️ {selected_set} 의 멤버를 현재 데이터에서 찾지 못했습니다.")
 
-        is_bot = pnl_for_picker["user_id"].isin(active_bots.keys())
-        bots_first = pnl_for_picker[is_bot].copy()
+        # picker — bot 들 먼저, 그 다음 일반 유저 (user_id 순)
+        is_bot = users_for_picker["user_id"].isin(active_bots.keys())
+        bots_first = users_for_picker[is_bot].copy()
         bots_first["bot_order"] = bots_first["user_id"].map(
             {uid: int(label.split("-")[1]) for uid, label in active_bots.items()}
         )
         bots_first = bots_first.sort_values("bot_order")
-        others = pnl_for_picker[~is_bot].sort_values("tx_count", ascending=False)
+        others = users_for_picker[~is_bot].sort_values("user_id")
         users_sorted = pd.concat([bots_first, others], ignore_index=True)
 
         option_to_id: dict[str, int] = {}
@@ -1169,16 +1175,15 @@ with tab_hourly:
             wallet_short = (wallet[:10] + "…" + wallet[-4:]) if isinstance(wallet, str) and len(wallet) > 16 else wallet
             bot_label = active_bots.get(uid)
             if bot_label:
-                label = f"🤖 {bot_label}  ·  {wallet_short}  ·  PNL {row['pnl']:,.0f}"
+                label = f"🤖 {bot_label}  ·  {wallet_short}"
                 bot_options.append(label)
             else:
-                label = f"{wallet_short}  ·  {uname}  ·  #{uid}  ·  PNL {row['pnl']:,.0f}"
+                label = f"{wallet_short}  ·  {uname}  ·  #{uid}"
             options.append(label)
             option_to_id[label] = uid
 
-        # 컨트롤 보이기 직전 — 큰 로딩 박스는 치우고 progress 만 살짝 띄움.
         top_loading_slot.empty()
-        progress_bar.progress(60, text="60% — 컨트롤 준비 완료, 옵션 선택 대기")
+        progress_bar.progress(60, text="60% — 컨트롤 렌더 중")
 
         cc1, cc2 = st.columns([3, 1])
         with cc1:
@@ -1187,7 +1192,7 @@ with tab_hourly:
                 f"지갑 선택 — 🤖 표시는 {selected_set} (기본값)",
                 options=options,
                 default=default_pick,
-                help=f"{selected_set} 멤버가 기본 선택. 일반 유저는 활동량 순으로 아래 정렬. 세트는 위 라디오에서 변경.",
+                help=f"{selected_set} 멤버가 기본 선택. 세트는 위 라디오에서 변경.",
                 key=f"hourly_picked_wallets__{selected_set}",
             )
         with cc2:
@@ -1195,6 +1200,7 @@ with tab_hourly:
                 "표시 방식",
                 options=["개별 지갑별", "선택 지갑 합산"],
                 index=0,
+                key="hourly_view_mode",
             )
 
         cc3, cc4 = st.columns([1, 2])
@@ -1206,6 +1212,7 @@ with tab_hourly:
                 value=1,
                 step=1,
                 help="1=1분(가장 세밀), 60=1시간, 1440=1일.",
+                key="hourly_minutes",
             )
         h_freq = f"{int(h_minutes)}min"
         if h_minutes >= 1440:
@@ -1222,51 +1229,98 @@ with tab_hourly:
             ts_min, ts_max = ds.transaction_date_range
             if ts_min is None:
                 ts_min = ts_max = date.today()
-            # 1분 단위 기본값에서 첫 렌더가 무거워지지 않도록 기본 기간을
-            # 마지막 6시간으로 좁힘. 4320 점 → 360 점으로 줄어듬.
-            default_end_dt = datetime.combine(ts_max, time(23, 59))
-            default_start_dt = default_end_dt - timedelta(hours=6)
-            if default_start_dt.date() < ts_min:
-                default_start_dt = datetime.combine(ts_min, time(0, 0))
+            # 사용자 요청: 기본 시작일 = 2026-05-04 00:00.
+            # 데이터 범위 밖이면 ts_min 으로 폴백.
+            from datetime import date as _date_cls
+            _DEFAULT_START_DATE = _date_cls(2026, 5, 4)
+            if ts_min <= _DEFAULT_START_DATE <= ts_max:
+                default_start_date = _DEFAULT_START_DATE
+            else:
+                default_start_date = ts_min
+            default_start_time = time(0, 0)
+            default_end_date = ts_max
+            default_end_time = time(23, 59)
+
             sc1, sc2 = st.columns(2)
             with sc1:
                 start_d = st.date_input(
-                    "시작 날짜", value=default_start_dt.date(),
+                    "시작 날짜", value=default_start_date,
                     min_value=ts_min, max_value=ts_max,
                     key="hourly_start_date",
                 )
                 start_t = st.time_input(
-                    "시작 시각", value=default_start_dt.time().replace(second=0, microsecond=0),
+                    "시작 시각", value=default_start_time,
                     key="hourly_start_time", step=60,
                 )
             with sc2:
                 end_d = st.date_input(
-                    "종료 날짜", value=default_end_dt.date(),
+                    "종료 날짜", value=default_end_date,
                     min_value=ts_min, max_value=ts_max,
                     key="hourly_end_date",
                 )
                 end_t = st.time_input(
-                    "종료 시각", value=default_end_dt.time().replace(second=0, microsecond=0),
+                    "종료 시각", value=default_end_time,
                     key="hourly_end_time", step=60,
                 )
             st.caption(
-                f"💡 기본 = 마지막 6시간 ({default_start_dt.strftime('%m-%d %H:%M')} ~ "
-                f"{default_end_dt.strftime('%m-%d %H:%M')}). "
-                "전체 범위 보려면 시작 날짜를 직접 변경하세요."
+                f"💡 기본 = {default_start_date.isoformat()} 00:00 ~ "
+                f"{default_end_date.isoformat()} 23:59"
             )
 
         h_start_dt = datetime.combine(start_d, start_t)
         h_end_dt = datetime.combine(end_d, end_t)
 
-        if h_end_dt <= h_start_dt:
-            progress_slot.empty()
-            st.error("⚠️ 종료 시각이 시작 시각보다 이전이거나 같습니다.")
-        elif not picked:
-            progress_slot.empty()
-            st.warning("지갑을 최소 1개 이상 선택하세요.")
+        progress_bar.progress(80, text="80% — 입력 대기")
+
+        # ---- 데이터셋 불러오기 버튼 (게이트) ----
+        st.markdown("---")
+        load_clicked = st.button(
+            "📊 데이터셋 불러오기",
+            type="primary",
+            use_container_width=True,
+            key="hourly_load_btn",
+            help="지갑 / 날짜 / 시간 단위 모두 채우고 누르세요.",
+        )
+        progress_slot.empty()
+
+        # 클릭 시 검증 → state 업데이트
+        if load_clicked:
+            errors: list[str] = []
+            if not picked:
+                errors.append("지갑을 최소 1개 이상 선택해주세요.")
+            if not start_d or not start_t:
+                errors.append("시작 날짜/시각이 비어있습니다.")
+            if not end_d or not end_t:
+                errors.append("종료 날짜/시각이 비어있습니다.")
+            if not h_minutes or h_minutes < 1:
+                errors.append("시간 단위(분)를 1 이상 입력해주세요.")
+            if h_end_dt <= h_start_dt:
+                errors.append("종료 시각이 시작 시각보다 이후여야 합니다.")
+
+            if errors:
+                for e in errors:
+                    st.error(f"❌ {e}")
+                st.session_state["hourly_data_loaded"] = False
+            else:
+                st.session_state["hourly_data_loaded"] = True
+
+        # ---- 로드 후 입력이 invalid 로 바뀌면 자동 리셋 ----
+        if st.session_state.get("hourly_data_loaded") and (
+            not picked or h_end_dt <= h_start_dt
+        ):
+            st.error(
+                "❌ 입력값이 변경되어 데이터를 표시할 수 없습니다. "
+                "다시 정하고 **📊 데이터셋 불러오기** 를 눌러주세요."
+            )
+            st.session_state["hourly_data_loaded"] = False
+
+        # ---- 게이트: 로드 안 됐으면 안내만 ----
+        if not st.session_state.get("hourly_data_loaded"):
+            st.info(
+                "👆 위에서 **지갑 / 날짜 / 시간 단위** 를 모두 정한 다음 "
+                "**📊 데이터셋 불러오기** 버튼을 눌러주세요."
+            )
         else:
-            # 데이터 계산 단계로 진입 — 위쪽 progress bar 마무리.
-            progress_bar.progress(80, text="80% — 데이터 계산 시작 (아래 status 박스 참고)")
             picked_ids = [option_to_id[label] for label in picked]
             results_placeholder = st.container()
 
