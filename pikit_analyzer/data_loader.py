@@ -49,7 +49,76 @@ def _resolve_cache_dir() -> Path | None:
 CACHE_DIR = _resolve_cache_dir()
 # pickle 파일 호환성 보호 — 코드가 바뀌어 deserialize 가 실패하면 cache 무효화.
 # 새 필드 추가하거나 구조 바꿀 때 이 값을 올리면 옛 캐시 자동 무시됨.
-CACHE_VERSION = 2
+CACHE_VERSION = 3
+
+
+def _transactions_parquet_path_for(snap_dir: Path) -> Path | None:
+    """transactions Parquet 파일의 캐시 경로. 키는 CSV mtime+size 해시."""
+    if CACHE_DIR is None:
+        return None
+    csv = snap_dir / "user_transaction_log.csv"
+    if not csv.exists():
+        return None
+    try:
+        stat = csv.stat()
+        tag = f"transactions_{snap_dir.name}_{int(stat.st_mtime)}_{stat.st_size}"
+        return CACHE_DIR / f"{tag}.parquet"
+    except OSError:
+        return None
+
+
+def _duckdb_query_transactions(
+    parquet_path: str | Path,
+    start_ts: "pd.Timestamp | None",
+    end_ts: "pd.Timestamp | None",
+) -> pd.DataFrame:
+    """DuckDB 로 Parquet 의 transactions 를 windowed 쿼리.
+
+    DuckDB 는 row group 별 min/max stats 를 사용해 필요 없는 row group 은 스킵
+    (predicate pushdown). 33M 행 파일에서 1만 행만 읽는 게 가능 → 메모리 O(window).
+    """
+    import duckdb  # 지연 import — 옵션 의존성.
+
+    where = []
+    params: list = []
+    if start_ts is not None:
+        where.append("created_at >= ?")
+        # DuckDB TIMESTAMP 비교를 위해 timezone-naive ISO 문자열로.
+        params.append(start_ts.tz_convert("UTC").tz_localize(None).isoformat(sep=" "))
+    if end_ts is not None:
+        where.append("created_at <= ?")
+        params.append(end_ts.tz_convert("UTC").tz_localize(None).isoformat(sep=" "))
+    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+    sql = f"SELECT * FROM read_parquet(?){where_sql}"
+    return duckdb.query(sql, [str(parquet_path), *params]).df()
+
+
+def _restore_transactions_dtypes(
+    df: pd.DataFrame, template: pd.DataFrame
+) -> pd.DataFrame:
+    """DuckDB 결과의 dtype 을 원본 transactions DataFrame 과 맞춤.
+
+    Parquet 라운드트립으로 잃어버리는 항목:
+      - created_at 타임존 (UTC 로 강제 복원)
+      - Int32 (DuckDB 은 보통 BIGINT/Int64 로 반환)
+      - category (DuckDB 은 string)
+    """
+    if df.empty:
+        return df
+    # tz-aware UTC 로 복원
+    if "created_at" in df.columns:
+        df["created_at"] = pd.to_datetime(df["created_at"], errors="coerce", utc=True)
+    # 원본의 Int32/category 컬럼 dtype 매칭
+    for col in df.columns:
+        if col in template.columns:
+            target_dtype = template[col].dtype
+            current = df[col].dtype
+            if current != target_dtype:
+                try:
+                    df[col] = df[col].astype(target_dtype)
+                except (TypeError, ValueError):
+                    pass
+    return df
 
 def _resolve_default_data_root() -> Path:
     """Pick the default data folder.
@@ -304,6 +373,7 @@ class PikitDataset:
         transactions,
         quest_user_ids=None,
         system_user_ids=None,
+        transactions_parquet_path=None,
     ):
         self.snapshot_date = snapshot_date
         self.blocks = blocks
@@ -324,6 +394,9 @@ class PikitDataset:
         # The operational system account (e.g. user_id 11). Tracks how much the
         # in-house "system pickaxe" has mined. UI exposes this as a toggle.
         self.system_user_ids = list(system_user_ids) if system_user_ids else []
+        # transactions Parquet 의 경로 (있으면). DuckDB 쿼리 레이어가 사용 — windowed
+        # 필터 시 전체를 RAM 에 올리지 않고 해당 행만 SQL 로 가져옴. None 이면 fallback.
+        self.transactions_parquet_path = transactions_parquet_path
 
     @property
     def test_user_ids(self):
@@ -354,6 +427,10 @@ class PikitDataset:
 
         - `date` (no time component) → 그 하루 끝(23:59:59.999)까지 inclusive 로 처리
         - `datetime` (시·분 포함) → 그 시각 정확히 사용
+
+        성능: transactions Parquet 이 캐시되어 있으면 DuckDB 가 SQL 로 windowed
+        쿼리 — 전체 트랜잭션을 RAM 에 올리지 않고 해당 행만 가져옴. 큰 데이터에서
+        메모리 사용이 윈도우 크기에만 의존.
         """
         from datetime import date as _date_cls, datetime as _datetime_cls
 
@@ -363,22 +440,48 @@ class PikitDataset:
                 return None
             # datetime 객체이면서 date 만 있는 경우 (datetime.date 클래스인 게 정확)
             is_pure_date = isinstance(v, _date_cls) and not isinstance(v, _datetime_cls)
-            ts = pd.Timestamp(v, tz="UTC")
+            # 이미 tz-aware Timestamp 면 UTC 로 변환만; 아니면 naive 로 두고 UTC 부여.
+            if isinstance(v, pd.Timestamp) and v.tz is not None:
+                ts = v.tz_convert("UTC")
+            else:
+                ts = pd.Timestamp(v, tz="UTC")
             if is_pure_date and end_of_day_if_date:
                 # 종료일이 date 형이면 그 하루 끝까지 포함하도록 (옛 동작 유지).
                 ts = ts + pd.Timedelta(days=1) - pd.Timedelta(milliseconds=1)
             return ts
 
-        tx = self.transactions
-        if "created_at" in tx.columns and len(tx) > 0:
-            mask = pd.Series(True, index=tx.index)
-            start_ts = _to_ts(start, end_of_day_if_date=False)
-            end_ts = _to_ts(end, end_of_day_if_date=True)
-            if start_ts is not None:
-                mask &= tx["created_at"] >= start_ts
-            if end_ts is not None:
-                mask &= tx["created_at"] <= end_ts
-            tx = tx[mask].copy()
+        start_ts = _to_ts(start, end_of_day_if_date=False)
+        end_ts = _to_ts(end, end_of_day_if_date=True)
+
+        # ---- Fast path: DuckDB 가 Parquet 에서 해당 행만 직접 읽음 ----
+        tx_filtered = None
+        if (
+            self.transactions_parquet_path
+            and Path(self.transactions_parquet_path).exists()
+            and (start_ts is not None or end_ts is not None)
+        ):
+            try:
+                tx_filtered = _duckdb_query_transactions(
+                    self.transactions_parquet_path, start_ts, end_ts
+                )
+                # Parquet 은 dtype 일부가 손실됨 — 원본 transactions 의 dtypes 와 맞추기.
+                tx_filtered = _restore_transactions_dtypes(tx_filtered, self.transactions)
+            except Exception:
+                # DuckDB 쿼리 실패 시 pandas fallback.
+                tx_filtered = None
+
+        # ---- Fallback: 기존 pandas 필터 ----
+        if tx_filtered is None:
+            tx = self.transactions
+            if "created_at" in tx.columns and len(tx) > 0:
+                mask = pd.Series(True, index=tx.index)
+                if start_ts is not None:
+                    mask &= tx["created_at"] >= start_ts
+                if end_ts is not None:
+                    mask &= tx["created_at"] <= end_ts
+                tx_filtered = tx[mask].copy()
+            else:
+                tx_filtered = tx
 
         return PikitDataset(
             snapshot_date=self.snapshot_date,
@@ -393,7 +496,8 @@ class PikitDataset:
             game_user_stats=self.game_user_stats,
             game_user_block_stats=self.game_user_block_stats,
             game_user_item_stats=self.game_user_item_stats,
-            transactions=tx,
+            transactions=tx_filtered,
+            transactions_parquet_path=self.transactions_parquet_path,
             quest_user_ids=list(self.quest_user_ids),
             system_user_ids=list(self.system_user_ids),
         )
@@ -782,6 +886,25 @@ def _load_snapshot_from_csv(snap_dir: Path, snapshot_date: str) -> PikitDataset:
     quest_user_ids = _detect_quest_users(users)
     system_user_ids = _detect_system_users(users)
 
+    # ---- transactions 를 Parquet 으로도 저장 (DuckDB 쿼리 레이어용) ----
+    # filter_by_date_range 가 windowed 쿼리 시 이 Parquet 을 DuckDB 로 읽어
+    # 메모리 사용을 윈도우 크기로만 제한할 수 있게 함. 데이터 33M+ 행에서도 OK.
+    parquet_path = _transactions_parquet_path_for(snap_dir)
+    if parquet_path is not None and not parquet_path.exists():
+        try:
+            # 옛 mtime 기반 Parquet 정리.
+            for old in CACHE_DIR.glob(f"transactions_{snapshot_date}_*.parquet"):
+                if old != parquet_path:
+                    try:
+                        old.unlink()
+                    except OSError:
+                        pass
+            tmp = parquet_path.with_suffix(".parquet.tmp")
+            transactions.to_parquet(tmp, index=False, compression="snappy")
+            tmp.replace(parquet_path)
+        except (OSError, ImportError, ValueError):
+            parquet_path = None
+
     return PikitDataset(
         snapshot_date=snapshot_date,
         blocks=blocks,
@@ -796,6 +919,7 @@ def _load_snapshot_from_csv(snap_dir: Path, snapshot_date: str) -> PikitDataset:
         game_user_block_stats=game_user_block_stats,
         game_user_item_stats=game_user_item_stats,
         transactions=transactions,
+        transactions_parquet_path=str(parquet_path) if parquet_path else None,
         quest_user_ids=quest_user_ids,
         system_user_ids=system_user_ids,
     )
