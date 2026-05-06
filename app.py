@@ -991,8 +991,26 @@ with tab_summon:
 
 # -------- ⏱️ 시간대별 PNL 탭 (재작성) --------
 with tab_hourly:
-    # 탭에 들어오자마자 즉시 보이는 큰 로딩 인디케이터 자리.
+    # 탭 진입 즉시 보이는 큰 로딩 박스 — 컨트롤이 렌더되기 전 공백을 채움.
     top_loading_slot = st.empty()
+    top_loading_slot.markdown(
+        """
+        <div style="padding:24px;margin:8px 0 16px;background:linear-gradient(90deg,#1a1f2e,#222840);
+                    border-left:4px solid #f5b800;border-radius:6px;">
+            <div style="font-size:18px;color:#f5b800;font-weight:600;">
+                ⏳ 시간대별 PNL 준비 중…
+            </div>
+            <div style="font-size:13px;color:#aaa;margin-top:6px;">
+                유저 목록 로딩 → 컨트롤 렌더 → 차트 계산 (캐시 적중 시 즉시)
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # 진행률 슬롯 — top_loading_slot 바로 아래에 빈 progress bar 자리.
+    progress_slot = st.empty()
+    progress_bar = progress_slot.progress(5, text="📥 1단계: 유저 목록 로딩")
 
     st.subheader("시간대별 PNL — 지갑 단위 + 시·분 단위 분석")
     st.write(
@@ -1000,8 +1018,6 @@ with tab_hourly:
         "선택한 지갑만 필터해서 계산하므로 첫 번째 호출 후엔 캐시 적중으로 즉시 반환됩니다."
     )
 
-    with top_loading_slot.container():
-        st.info("⏳ 1/3 — 유저 목록 로딩 중…")
     _t_min, _t_max = ds.transaction_date_range
     if _t_min is None:
         _t_min = _t_max = date.today()
@@ -1009,9 +1025,11 @@ with tab_hourly:
         latest_choice, data_root, mode_filter_for_ds, exclude_system,
         _t_min.isoformat(), _t_max.isoformat(),
     )
+    progress_bar.progress(35, text="✓ 유저 목록 준비 완료 → 컨트롤 렌더")
 
     if pnl_for_picker.empty:
         top_loading_slot.empty()
+        progress_slot.empty()
         st.info("선택된 모드/기간에 트랜잭션이 있는 유저가 없습니다.")
     else:
         is_bot = pnl_for_picker["user_id"].isin(BOT_USER_IDS.keys())
@@ -1040,7 +1058,9 @@ with tab_hourly:
             options.append(label)
             option_to_id[label] = uid
 
+        # 컨트롤 보이기 직전 — 큰 로딩 박스는 치우고 progress 만 살짝 띄움.
         top_loading_slot.empty()
+        progress_bar.progress(60, text="✓ 컨트롤 준비 완료 → 옵션 선택 대기")
 
         cc1, cc2 = st.columns([3, 1])
         with cc1:
@@ -1120,10 +1140,14 @@ with tab_hourly:
         h_end_dt = datetime.combine(end_d, end_t)
 
         if h_end_dt <= h_start_dt:
+            progress_slot.empty()
             st.error("⚠️ 종료 시각이 시작 시각보다 이전이거나 같습니다.")
         elif not picked:
+            progress_slot.empty()
             st.warning("지갑을 최소 1개 이상 선택하세요.")
         else:
+            # 데이터 계산 단계로 진입 — 위쪽 progress bar 마무리.
+            progress_bar.progress(80, text="🚀 데이터 계산 시작 (아래 status 박스 참고)")
             picked_ids = [option_to_id[label] for label in picked]
             results_placeholder = st.container()
 
@@ -1305,6 +1329,8 @@ with tab_hourly:
                         state="complete",
                         expanded=False,
                     )
+                    # 모든 단계 끝 — 위쪽 progress bar 도 정리.
+                    progress_slot.empty()
 
 
 # -------- 유저 상세 / 그룹 분석 탭 --------
