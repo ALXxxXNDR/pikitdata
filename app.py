@@ -61,22 +61,64 @@ st.set_page_config(
 # 헬퍼
 # ---------------------------------------------------------------------------
 
-# 운영자 봇 지갑 매핑 — 시간대별 PNL 탭에서 기본 선택값으로 사용.
-# user_id → 봇 라벨. 매칭은 사용자가 알려준 prefix 를 실제 데이터에 매핑한 결과.
-BOT_USER_IDS: dict[int, str] = {
-    30: "bot-01",   # 0xc76Acc31
-    31: "bot-02",   # 0x987E2d36
-    47: "bot-03",   # 0x0C8ea4C1
-    60: "bot-04",   # 0x221281c6
-    61: "bot-05",   # 0x7Fc089E3
-    62: "bot-06",   # 0x09c1fd34
-    64: "bot-07",   # 0x17964258
-    63: "bot-08",   # 0xC2666Fe9
-    65: "bot-09",   # 0xeac8829E
-    66: "bot-10",   # 0x19A94037
-    67: "bot-11",   # 0x4D75f9Dd
-    56: "bot-12",   # 0x08f37ee6
+# 운영자 봇 지갑 세트 — 시간대별 PNL 탭에서 한 번에 선택 가능.
+# 새 세트 추가는 BOT_SETS 에 entry 만 추가하면 picker 에 자동 등장.
+# 각 세트는 "user_ids" 또는 "wallets" 둘 중 하나로 정의. wallets 는 데이터 안의
+# wallet_address 와 case-insensitive 매칭.
+BOT_SETS: dict[str, dict] = {
+    "A-Bot-set": {
+        # 옛 운영 봇 — user_id 매칭 (지갑 풀주소 미보유, prefix 만 알려진 상태).
+        "user_ids": [30, 31, 47, 60, 61, 62, 64, 63, 65, 66, 67, 56],
+    },
+    "B-Bot-set": {
+        # 현재 운영 봇 — 지갑 주소 매칭.
+        "wallets": [
+            "0x83004376DC7A9Ab7c9b4AB99a37357CC6c30D109",
+            "0xf4c86873DC208303e114d25859666d48dFFefad4",
+            "0x813aa26437B082CfB1af2483AF9C3E27E2630445",
+            "0x6f5924C3328792e9586f3cb21Fdd96e0A8ef1e8e",
+            "0x33353E126D24F5A5CC7cdaE50F135f3362b14446",
+            "0x79CA6eba59F1816Cd927957E0c8347dDa1C3FdFA",
+            "0xfCe91B40911B7583e6aFB3Ad521c69A06B95397d",
+            "0x69fc99898dB1e3F8BA644E6ab9321A1D539D50e5",
+            "0x47407a480045343E487e0Bd078Cd588af3a35a50",
+            "0x7Fa299fB3E686f33Dc580304e370dA04bb5186b1",
+            "0x08457a689828c697d64fbD0650a1772ef7B464eB",
+            "0x2151A814545f76a292456DEEc455EB2D31884458",
+        ],
+    },
 }
+DEFAULT_BOT_SET = "B-Bot-set"
+
+
+def resolve_bot_set(set_name: str, pnl_df) -> dict[int, str]:
+    """봇 세트 정의를 현재 데이터의 user_id 매핑으로 해석.
+
+    return: {user_id: "bot-NN"} — 실제로 데이터에 존재하는 멤버만.
+    """
+    cfg = BOT_SETS.get(set_name) or {}
+    if pnl_df is None or pnl_df.empty:
+        return {}
+    if "user_ids" in cfg:
+        present = set(pnl_df["user_id"].astype(int).tolist())
+        return {
+            uid: f"bot-{i+1:02d}"
+            for i, uid in enumerate(cfg["user_ids"])
+            if uid in present
+        }
+    if "wallets" in cfg:
+        wallet_to_label = {
+            w.lower(): f"bot-{i+1:02d}" for i, w in enumerate(cfg["wallets"])
+        }
+        wallet_lower = pnl_df["wallet_address"].astype(str).str.lower()
+        matched = pnl_df[wallet_lower.isin(wallet_to_label.keys())]
+        return {
+            int(row["user_id"]): wallet_to_label[
+                str(row.get("wallet_address", "")).lower()
+            ]
+            for _, row in matched.iterrows()
+        }
+    return {}
 
 
 def _cached_snapshot(date_str: str, data_root: str):
@@ -411,8 +453,26 @@ tab_data = _tabs[7] if not PUBLIC_MODE else None
 
 # -------- 유저 탭 --------
 with tab_users:
+    # 탭 진입 즉시 큰 로딩 박스 — compute_user_pnl 이 무거워 첫 진입 5~15초 걸림.
+    _users_loading_slot = st.empty()
+    _users_loading_slot.markdown(
+        """
+        <div style="padding:24px;margin:8px 0 16px;background:linear-gradient(90deg,#1a1f2e,#222840);
+                    border-left:4px solid #f5b800;border-radius:6px;">
+            <div style="font-size:18px;color:#f5b800;font-weight:600;">
+                ⏳ 유저별 PNL 계산 중…
+            </div>
+            <div style="font-size:13px;color:#aaa;margin-top:6px;">
+                전체 유저 트랜잭션 집계 중. 캐시 적중 시 즉시 반환.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     st.subheader("유저별 PNL")
-    pnl = compute_user_pnl(ds, exclude_system_users=exclude_system)
+    with st.spinner("👤 유저별 PNL 집계…"):
+        pnl = compute_user_pnl(ds, exclude_system_users=exclude_system)
+    _users_loading_slot.empty()
 
     # 방어적 필터: quest 는 항상, system 은 토글에 따라 PNL 표에서 추가 보장 제거.
     blocked_ids = list(ds.quest_user_ids)
@@ -673,13 +733,32 @@ with tab_winning:
 
 # -------- 🎰 곡괭이 소환 ROI 탭 --------
 with tab_summon:
+    # 탭 진입 즉시 큰 로딩 박스 — compute_per_summon_returns 가 가장 무거운 루프.
+    _summon_loading_slot = st.empty()
+    _summon_loading_slot.markdown(
+        """
+        <div style="padding:24px;margin:8px 0 16px;background:linear-gradient(90deg,#1a1f2e,#222840);
+                    border-left:4px solid #f5b800;border-radius:6px;">
+            <div style="font-size:18px;color:#f5b800;font-weight:600;">
+                ⏳ 곡괭이 소환 ROI 계산 중…
+            </div>
+            <div style="font-size:13px;color:#aaa;margin-top:6px;">
+                각 소환 행마다 활성 구간 안의 블록 보상을 합산하는 무거운 단계입니다.
+                첫 호출 후엔 캐시 적중으로 즉시 반환.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     st.subheader("곡괭이 1회 소환 = 1 row")
     st.write(
         "각 곡괭이 구매(소환)마다 그 곡괭이가 활성인 동안 (최대 duration_ms 까지, 다음 구매 전까지) "
         "유저가 받은 **블록 보상 합계**를 계산합니다. 이게 곡괭이 한 번 사면 평균적으로 얼마 벌지를 보여주는 진짜 ROI 분포입니다."
     )
 
-    psr = compute_per_summon_returns(ds, exclude_system_users=exclude_system)
+    with st.spinner("🎰 소환별 net PNL 계산 중…"):
+        psr = compute_per_summon_returns(ds, exclude_system_users=exclude_system)
+    _summon_loading_slot.empty()
     if psr.empty:
         st.info("이 조건에 곡괭이 구매 트랜잭션이 없습니다.")
     else:
@@ -1032,10 +1111,37 @@ with tab_hourly:
         progress_slot.empty()
         st.info("선택된 모드/기간에 트랜잭션이 있는 유저가 없습니다.")
     else:
-        is_bot = pnl_for_picker["user_id"].isin(BOT_USER_IDS.keys())
+        # 봇 세트 선택 — 어느 set 의 봇들을 🤖 로 강조 + 기본 선택할지.
+        set_names = list(BOT_SETS.keys())
+        default_set_idx = (
+            set_names.index(DEFAULT_BOT_SET) if DEFAULT_BOT_SET in set_names else 0
+        )
+        selected_set = st.radio(
+            "봇 세트",
+            options=set_names,
+            index=default_set_idx,
+            horizontal=True,
+            help=(
+                "선택한 세트에 속한 지갑들이 🤖 로 표시되고 기본 선택됩니다. "
+                "세트 추가는 코드의 BOT_SETS 에 entry 만 추가하면 됩니다 (C-Bot-set, D-Bot-set ...)."
+            ),
+            key="hourly_bot_set",
+        )
+        active_bots = resolve_bot_set(selected_set, pnl_for_picker)
+
+        if active_bots:
+            st.caption(
+                f"✓ {selected_set} — 데이터에서 {len(active_bots)}/"
+                f"{len(BOT_SETS[selected_set].get('user_ids') or BOT_SETS[selected_set].get('wallets') or [])}"
+                "개 매칭됨"
+            )
+        else:
+            st.caption(f"⚠️ {selected_set} 의 멤버를 현재 데이터에서 찾지 못했습니다.")
+
+        is_bot = pnl_for_picker["user_id"].isin(active_bots.keys())
         bots_first = pnl_for_picker[is_bot].copy()
         bots_first["bot_order"] = bots_first["user_id"].map(
-            {uid: int(label.split("-")[1]) for uid, label in BOT_USER_IDS.items()}
+            {uid: int(label.split("-")[1]) for uid, label in active_bots.items()}
         )
         bots_first = bots_first.sort_values("bot_order")
         others = pnl_for_picker[~is_bot].sort_values("tx_count", ascending=False)
@@ -1049,7 +1155,7 @@ with tab_hourly:
             uname = row.get("username") or "(no name)"
             wallet = row.get("wallet_address") or ""
             wallet_short = (wallet[:10] + "…" + wallet[-4:]) if isinstance(wallet, str) and len(wallet) > 16 else wallet
-            bot_label = BOT_USER_IDS.get(uid)
+            bot_label = active_bots.get(uid)
             if bot_label:
                 label = f"🤖 {bot_label}  ·  {wallet_short}  ·  PNL {row['pnl']:,.0f}"
                 bot_options.append(label)
@@ -1066,10 +1172,11 @@ with tab_hourly:
         with cc1:
             default_pick = bot_options if bot_options else options[: min(3, len(options))]
             picked = st.multiselect(
-                "지갑 선택 — 🤖 표시는 운영 봇 (기본값)",
+                f"지갑 선택 — 🤖 표시는 {selected_set} (기본값)",
                 options=options,
                 default=default_pick,
-                help="봇 12개가 기본 선택. 일반 유저는 활동량 순으로 아래 정렬.",
+                help=f"{selected_set} 멤버가 기본 선택. 일반 유저는 활동량 순으로 아래 정렬. 세트는 위 라디오에서 변경.",
+                key=f"hourly_picked_wallets__{selected_set}",
             )
         with cc2:
             view_mode = st.radio(
@@ -1188,8 +1295,8 @@ with tab_hourly:
                 else:
                     def _make_label(r):
                         uid = int(r["user_id"])
-                        if uid in BOT_USER_IDS:
-                            return f"🤖 {BOT_USER_IDS[uid]}"
+                        if uid in active_bots:
+                            return f"🤖 {active_bots[uid]}"
                         return f"#{uid} {r['username'] or ''}".strip()
 
                     st.write("📊 3/6 — 차트 데이터 가공")
@@ -1306,7 +1413,7 @@ with tab_hourly:
                             for i, uid in enumerate(unique_users):
                                 sub = ts[ts["user_id"] == int(uid)].copy()
                                 sub_label = (
-                                    BOT_USER_IDS.get(int(uid))
+                                    active_bots.get(int(uid))
                                     or sub.iloc[0].get("username", "?")
                                     or f"user_{int(uid)}"
                                 )
