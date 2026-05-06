@@ -1083,19 +1083,38 @@ with tab_hourly:
             ts_min, ts_max = ds.transaction_date_range
             if ts_min is None:
                 ts_min = ts_max = date.today()
+            # 1분 단위 기본값에서 첫 렌더가 무거워지지 않도록 기본 기간을
+            # 마지막 6시간으로 좁힘. 4320 점 → 360 점으로 줄어듬.
+            default_end_dt = datetime.combine(ts_max, time(23, 59))
+            default_start_dt = default_end_dt - timedelta(hours=6)
+            if default_start_dt.date() < ts_min:
+                default_start_dt = datetime.combine(ts_min, time(0, 0))
             sc1, sc2 = st.columns(2)
             with sc1:
                 start_d = st.date_input(
-                    "시작 날짜", value=ts_min, min_value=ts_min, max_value=ts_max,
+                    "시작 날짜", value=default_start_dt.date(),
+                    min_value=ts_min, max_value=ts_max,
                     key="hourly_start_date",
                 )
-                start_t = st.time_input("시작 시각", value=time(0, 0), key="hourly_start_time", step=60)
+                start_t = st.time_input(
+                    "시작 시각", value=default_start_dt.time().replace(second=0, microsecond=0),
+                    key="hourly_start_time", step=60,
+                )
             with sc2:
                 end_d = st.date_input(
-                    "종료 날짜", value=ts_max, min_value=ts_min, max_value=ts_max,
+                    "종료 날짜", value=default_end_dt.date(),
+                    min_value=ts_min, max_value=ts_max,
                     key="hourly_end_date",
                 )
-                end_t = st.time_input("종료 시각", value=time(23, 59), key="hourly_end_time", step=60)
+                end_t = st.time_input(
+                    "종료 시각", value=default_end_dt.time().replace(second=0, microsecond=0),
+                    key="hourly_end_time", step=60,
+                )
+            st.caption(
+                f"💡 기본 = 마지막 6시간 ({default_start_dt.strftime('%m-%d %H:%M')} ~ "
+                f"{default_end_dt.strftime('%m-%d %H:%M')}). "
+                "전체 범위 보려면 시작 날짜를 직접 변경하세요."
+            )
 
         h_start_dt = datetime.combine(start_d, start_t)
         h_end_dt = datetime.combine(end_d, end_t)
