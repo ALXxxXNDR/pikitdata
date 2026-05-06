@@ -32,7 +32,9 @@ def _resolve_default_data_root() -> Path:
     repo_data = Path(__file__).resolve().parent.parent / "data"
     if repo_data.exists():
         return repo_data
-    return Path("/Users/moomi/Downloads/PIKIT BETA DATA")
+    # 마지막 대안: 사용자 홈 디렉터리 아래 'Downloads/PIKIT BETA DATA'.
+    # 어떤 사용자가 받아도 동작하도록 절대 경로 대신 Path.home() 사용.
+    return Path.home() / "Downloads" / "PIKIT BETA DATA"
 
 
 DEFAULT_DATA_ROOT = _resolve_default_data_root()
@@ -246,6 +248,57 @@ class PikitDataset:
             system_user_ids=list(self.system_user_ids),
         )
 
+    def filter_by_game_mode(self, mode: str | None) -> "PikitDataset":
+        """`mode` ∈ {'NORMAL', 'HARDCORE', None/'전체'}. None 이면 변경 없이 반환.
+
+        DEMO_CREDIT_CHARGE 같은 메타 트랜잭션도 같이 분류되므로, 단순히
+        `transactions[transactions.game_mode == mode]` 한 결과를 새 dataset 으로
+        감싸 반환합니다.
+        """
+        if mode is None or mode in ("전체", "ALL"):
+            return self
+        tx = self.transactions
+        if "game_mode" in tx.columns and len(tx) > 0:
+            tx = tx[tx["game_mode"] == mode].copy()
+
+        # 같은 모드 블록/아이템만 보이게 config 도 함께 슬라이스 — 다만 모드별
+        # 설정 자체는 두 모드가 모두 들어있으므로 mode 컬럼 기준으로 필터.
+        blocks = self.blocks
+        if "mode" in blocks.columns:
+            blocks = blocks[blocks["mode"] == mode].copy()
+        items = self.items
+        if "mode" in items.columns:
+            items = items[items["mode"] == mode].copy()
+
+        return PikitDataset(
+            snapshot_date=self.snapshot_date,
+            blocks=blocks,
+            items=items,
+            games=self.games,
+            users=self.users,
+            user_stats=self.user_stats,
+            user_block_stats=self.user_block_stats,
+            user_item_stats=self.user_item_stats,
+            user_attendance=self.user_attendance,
+            game_user_stats=self.game_user_stats,
+            game_user_block_stats=self.game_user_block_stats,
+            game_user_item_stats=self.game_user_item_stats,
+            transactions=tx,
+            quest_user_ids=list(self.quest_user_ids),
+            system_user_ids=list(self.system_user_ids),
+        )
+
+    @property
+    def available_game_modes(self) -> list[str]:
+        """Modes that actually appear in this dataset's transactions."""
+        tx = self.transactions
+        if "game_mode" not in tx.columns or tx.empty:
+            return []
+        modes = tx["game_mode"].dropna().unique().tolist()
+        # NORMAL 먼저, HARDCORE 다음, 그 외는 뒤쪽
+        order = {"NORMAL": 0, "HARDCORE": 1, "TEST": 2, "UNKNOWN": 3}
+        return sorted(modes, key=lambda m: order.get(m, 99))
+
     @property
     def transaction_date_range(self) -> tuple:
         """Min and max transaction date (UTC date objects), or (None, None) if empty."""
@@ -414,6 +467,28 @@ def load_snapshot(snapshot_date: str, data_root: str | None = None) -> PikitData
     transactions = _to_datetime(transactions, ["created_at"])
     if "created_at" in transactions.columns:
         transactions["snapshot_day"] = transactions["created_at"].dt.date
+
+    # game_id → game_mode 분류 (NORMAL / HARDCORE / TEST / UNKNOWN).
+    # `mode_name` 가 'HARDCORE' 를 포함하면 HARDCORE, 'NORMAL' 이면 NORMAL,
+    # 그 외엔 TEST 로 분류하여 어떤 mode_name 이 추가돼도 동작하도록 합니다.
+    if not games.empty:
+        mode_map: dict[int, str] = {}
+        for _, row in games.iterrows():
+            gid = row["game_id"]
+            name = (row["mode_name"] or "").upper() if isinstance(row["mode_name"], str) else ""
+            if pd.isna(gid):
+                continue
+            if "HARDCORE" in name:
+                mode_map[int(gid)] = "HARDCORE"
+            elif "NORMAL" in name:
+                mode_map[int(gid)] = "NORMAL"
+            elif "TEST" in name:
+                mode_map[int(gid)] = "TEST"
+            else:
+                mode_map[int(gid)] = "UNKNOWN"
+        transactions["game_mode"] = transactions["game_id"].map(mode_map).fillna("UNKNOWN")
+    else:
+        transactions["game_mode"] = "UNKNOWN"
 
     quest_user_ids = _detect_quest_users(users)
     system_user_ids = _detect_system_users(users)

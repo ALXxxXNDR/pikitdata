@@ -23,7 +23,7 @@
 ## 1) 비공개 GitHub 저장소 만들기
 
 ```bash
-cd /Users/moomi/Downloads/z03.Vibe_Coding/dataanal
+cd <repo>
 
 git init
 git branch -M main
@@ -31,7 +31,7 @@ git branch -M main
 # 데이터 폴더가 외부에 있으면 그대로 두고, 저장소 안에 두려면
 # data/ 디렉터리에 복사 (이 폴더는 .gitignore 로 차단됩니다)
 mkdir -p data
-cp -R "/Users/moomi/Downloads/PIKIT BETA DATA/2026.05.06" data/
+cp -R "~/Downloads/PIKIT BETA DATA/2026.05.06" data/
 # (필요시 다른 날짜도 복사)
 
 git add .
@@ -84,7 +84,7 @@ git push -u origin main
 
 ```bash
 # 로컬에서 새 폴더 복사
-cp -R "/Users/moomi/Downloads/PIKIT BETA DATA/2026.05.07" data/
+cp -R "~/Downloads/PIKIT BETA DATA/2026.05.07" data/
 
 # 1) data/ 가 .gitignore 로 막혀 있으면 해제하거나:
 git add -f data/2026.05.07
