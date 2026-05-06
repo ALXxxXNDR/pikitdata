@@ -1209,20 +1209,25 @@ with tab_hourly:
                 "시간 단위 (분)",
                 min_value=1,
                 max_value=1440,
-                value=1,
+                value=None,
                 step=1,
-                help="1=1분(가장 세밀), 60=1시간, 1440=1일.",
+                placeholder="예: 1, 60, 1440",
+                help="1=1분(가장 세밀), 60=1시간, 1440=1일. 직접 입력해주세요.",
                 key="hourly_minutes",
             )
-        h_freq = f"{int(h_minutes)}min"
-        if h_minutes >= 1440:
-            h_freq_label = f"{int(h_minutes // 1440)}일"
-        elif h_minutes >= 60 and h_minutes % 60 == 0:
-            h_freq_label = f"{int(h_minutes // 60)}시간"
-        elif h_minutes >= 60:
-            h_freq_label = f"{int(h_minutes // 60)}시간 {int(h_minutes % 60)}분"
+        if h_minutes is None:
+            h_freq = None
+            h_freq_label = None
         else:
-            h_freq_label = f"{int(h_minutes)}분"
+            h_freq = f"{int(h_minutes)}min"
+            if h_minutes >= 1440:
+                h_freq_label = f"{int(h_minutes // 1440)}일"
+            elif h_minutes >= 60 and h_minutes % 60 == 0:
+                h_freq_label = f"{int(h_minutes // 60)}시간"
+            elif h_minutes >= 60:
+                h_freq_label = f"{int(h_minutes // 60)}시간 {int(h_minutes % 60)}분"
+            else:
+                h_freq_label = f"{int(h_minutes)}분"
 
         with cc4:
             st.markdown("**조회 기간 (시·분 단위)**")
@@ -1306,7 +1311,7 @@ with tab_hourly:
 
         # ---- 로드 후 입력이 invalid 로 바뀌면 자동 리셋 ----
         if st.session_state.get("hourly_data_loaded") and (
-            not picked or h_end_dt <= h_start_dt
+            not picked or h_end_dt <= h_start_dt or h_minutes is None
         ):
             st.error(
                 "❌ 입력값이 변경되어 데이터를 표시할 수 없습니다. "
