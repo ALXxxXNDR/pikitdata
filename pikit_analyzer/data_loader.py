@@ -12,7 +12,11 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass, field
+# `dataclasses` is intentionally avoided — Python 3.14 has a regression where
+# `@dataclass` on a class with `from __future__ import annotations` triggers
+# `AttributeError: 'NoneType' object has no attribute '__dict__'` inside
+# `dataclasses._is_type` during initial class processing. We use a plain class
+# with explicit `__init__` instead. (cpython issue around 3.14.4 / b/130962.)
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
@@ -249,35 +253,53 @@ TX_RENAME = {
 # Snapshot model
 # ---------------------------------------------------------------------------
 
-@dataclass
 class PikitDataset:
-    """A single daily snapshot of PIKIT beta data."""
+    """A single daily snapshot of PIKIT beta data.
 
-    snapshot_date: str
-    blocks: pd.DataFrame
-    items: pd.DataFrame
-    games: pd.DataFrame
-    users: pd.DataFrame
-    user_stats: pd.DataFrame
-    user_block_stats: pd.DataFrame
-    user_item_stats: pd.DataFrame
-    user_attendance: pd.DataFrame
-    game_user_stats: pd.DataFrame
-    game_user_block_stats: pd.DataFrame
-    game_user_item_stats: pd.DataFrame
-    transactions: pd.DataFrame
+    Plain class instead of `@dataclass` due to a Python 3.14 dataclass
+    introspection regression (see comment near the imports above).
+    """
 
-    # Quest fixture accounts (e.g. user_id 1-10) — these are seeded for in-game
-    # quests and never represent organic play. They are *always* removed from
-    # any analysis surface and there is no UI option to include them.
-    quest_user_ids: list[int] = field(default_factory=list)
-    # The operational system account (e.g. user_id 11). Tracks how much the
-    # in-house "system pickaxe" has mined, so it's useful to keep around when
-    # auditing internal activity. The dashboard exposes this as a toggle.
-    system_user_ids: list[int] = field(default_factory=list)
+    def __init__(
+        self,
+        snapshot_date,
+        blocks,
+        items,
+        games,
+        users,
+        user_stats,
+        user_block_stats,
+        user_item_stats,
+        user_attendance,
+        game_user_stats,
+        game_user_block_stats,
+        game_user_item_stats,
+        transactions,
+        quest_user_ids=None,
+        system_user_ids=None,
+    ):
+        self.snapshot_date = snapshot_date
+        self.blocks = blocks
+        self.items = items
+        self.games = games
+        self.users = users
+        self.user_stats = user_stats
+        self.user_block_stats = user_block_stats
+        self.user_item_stats = user_item_stats
+        self.user_attendance = user_attendance
+        self.game_user_stats = game_user_stats
+        self.game_user_block_stats = game_user_block_stats
+        self.game_user_item_stats = game_user_item_stats
+        self.transactions = transactions
+        # Quest fixture accounts (e.g. user_id 1-10) — seeded for in-game
+        # quests, never organic play. Always filtered, no UI toggle.
+        self.quest_user_ids = list(quest_user_ids) if quest_user_ids else []
+        # The operational system account (e.g. user_id 11). Tracks how much the
+        # in-house "system pickaxe" has mined. UI exposes this as a toggle.
+        self.system_user_ids = list(system_user_ids) if system_user_ids else []
 
     @property
-    def test_user_ids(self) -> list[int]:
+    def test_user_ids(self):
         """Backwards-compatible accessor: union of quest + system."""
         return list(self.quest_user_ids) + list(self.system_user_ids)
 
