@@ -1,0 +1,39 @@
+# --- Python ---
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- macOS ---
+.DS_Store
+
+# --- IDEs ---
+.idea/
+.vscode/
+
+# --- Streamlit ---
+.streamlit/secrets.toml
+
+# --- Claude Code local config ---
+.claude/
+
+# --- DATA — never commit raw beta data ---
+# Local data folder used for development:
+PIKIT BETA DATA/
+PIKIT_BETA_DATA/
+
+# In-repo private data folder (used in production via PIKIT_DATA_ROOT=./data):
+data/
+
+# Misc CSV / archives that might end up at the repo root:
+*.zip
+/*.csv
+/*.json
+
+# Anything dropped into a top-level snapshot folder pattern:
+/2026.*
+/2027.*

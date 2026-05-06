@@ -1,0 +1,19 @@
+# Streamlit Community Cloud / 자체 호스팅용 기본값.
+# secrets는 .streamlit/secrets.toml 에 두고, 이 파일은 공개해도 안전합니다.
+
+[browser]
+gatherUsageStats = false
+
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = true
+maxUploadSize = 200          # 새 스냅샷 CSV 업로드 여유 (MB)
+
+[theme]
+base = "dark"
+primaryColor = "#f5b800"
+backgroundColor = "#0e1117"
+secondaryBackgroundColor = "#161b22"
+textColor = "#f5f5f5"
+font = "sans serif"
