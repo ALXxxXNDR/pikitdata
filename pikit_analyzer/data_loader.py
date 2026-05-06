@@ -298,22 +298,36 @@ class PikitDataset:
         return df[~df[user_col].isin(self.system_user_ids)].copy()
 
     def filter_by_date_range(self, start, end) -> "PikitDataset":
-        """Return a copy with transactions sliced to [start, end] (inclusive on both ends).
+        """Return a copy with transactions sliced to [start, end].
 
-        Configs (blocks, items, games, users) remain as-is — we use the latest
-        snapshot's config but only count activity within the date range.
+        `start` / `end` may be `datetime.date`, `datetime.datetime`, pandas Timestamp,
+        or ISO string. None = no bound on that side.
 
-        `start` / `end` may be `datetime.date`, `datetime.datetime`, or strings
-        like "2026-05-04". `None` means "no bound on that side".
+        - `date` (no time component) → 그 하루 끝(23:59:59.999)까지 inclusive 로 처리
+        - `datetime` (시·분 포함) → 그 시각 정확히 사용
         """
+        from datetime import date as _date_cls, datetime as _datetime_cls
+
+        def _to_ts(v, end_of_day_if_date: bool):
+            """Normalize input to UTC pandas Timestamp."""
+            if v is None:
+                return None
+            # datetime 객체이면서 date 만 있는 경우 (datetime.date 클래스인 게 정확)
+            is_pure_date = isinstance(v, _date_cls) and not isinstance(v, _datetime_cls)
+            ts = pd.Timestamp(v, tz="UTC")
+            if is_pure_date and end_of_day_if_date:
+                # 종료일이 date 형이면 그 하루 끝까지 포함하도록 (옛 동작 유지).
+                ts = ts + pd.Timedelta(days=1) - pd.Timedelta(milliseconds=1)
+            return ts
+
         tx = self.transactions
         if "created_at" in tx.columns and len(tx) > 0:
             mask = pd.Series(True, index=tx.index)
-            if start is not None:
-                start_ts = pd.Timestamp(start, tz="UTC")
+            start_ts = _to_ts(start, end_of_day_if_date=False)
+            end_ts = _to_ts(end, end_of_day_if_date=True)
+            if start_ts is not None:
                 mask &= tx["created_at"] >= start_ts
-            if end is not None:
-                end_ts = pd.Timestamp(end, tz="UTC") + pd.Timedelta(days=1) - pd.Timedelta(milliseconds=1)
+            if end_ts is not None:
                 mask &= tx["created_at"] <= end_ts
             tx = tx[mask].copy()
 

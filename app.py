@@ -6,7 +6,7 @@ PIKIT 베타 밸런스 대시보드.
 from __future__ import annotations
 
 import os
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -993,16 +993,19 @@ with tab_summon:
 
 
 
-# -------- ⏱️ 시간대별 PNL 탭 --------
+# -------- ⏱️ 시간대별 PNL 탭 (재작성) --------
 with tab_hourly:
-    st.subheader("시간대별 PNL — 지갑 단위 + 시간 단위 분석")
+    # 탭에 들어오자마자 즉시 보이는 큰 로딩 인디케이터 자리.
+    top_loading_slot = st.empty()
+
+    st.subheader("시간대별 PNL — 지갑 단위 + 시·분 단위 분석")
     st.write(
-        "지갑(주소)을 직접 골라 시간 단위와 조회 기간을 설정하고 PNL 추이를 봅니다. "
-        "선택한 지갑들만 필터해서 계산하므로 빠르게 뜹니다."
+        "지갑(주소)을 골라 분 단위 시간과 시·분 단위 기간을 설정하고 PNL 추이를 봅니다. "
+        "선택한 지갑만 필터해서 계산하므로 첫 번째 호출 후엔 캐시 적중으로 즉시 반환됩니다."
     )
 
-    # ---- 지갑(유저) 후보 선정: 캐시된 PNL 표 기준 ----
-    # 사이드바 ds 의 트랜잭션 범위를 ISO 문자열로 만들어 캐시 키에 포함.
+    with top_loading_slot.container():
+        st.info("⏳ 1/3 — 유저 목록 로딩 중…")
     _t_min, _t_max = ds.transaction_date_range
     if _t_min is None:
         _t_min = _t_max = date.today()
@@ -1010,10 +1013,11 @@ with tab_hourly:
         latest_choice, data_root, mode_filter_for_ds, exclude_system,
         _t_min.isoformat(), _t_max.isoformat(),
     )
+
     if pnl_for_picker.empty:
+        top_loading_slot.empty()
         st.info("선택된 모드/기간에 트랜잭션이 있는 유저가 없습니다.")
     else:
-        # 봇은 항상 위에 (활동량 무관), 그 다음 일반 유저는 활동량 큰 순.
         is_bot = pnl_for_picker["user_id"].isin(BOT_USER_IDS.keys())
         bots_first = pnl_for_picker[is_bot].copy()
         bots_first["bot_order"] = bots_first["user_id"].map(
@@ -1040,16 +1044,16 @@ with tab_hourly:
             options.append(label)
             option_to_id[label] = uid
 
-        # ----- 컨트롤: 지갑 / 시간 단위 / 기간 / 표시 방식 -----
+        top_loading_slot.empty()
+
         cc1, cc2 = st.columns([3, 1])
         with cc1:
-            # 봇 12개를 기본 선택. 이게 user 의 실제 운영 봇들.
             default_pick = bot_options if bot_options else options[: min(3, len(options))]
             picked = st.multiselect(
-                "지갑 선택 (검색: 주소 / 닉네임 / user_id) — 🤖 표시는 운영 봇",
+                "지갑 선택 — 🤖 표시는 운영 봇 (기본값)",
                 options=options,
                 default=default_pick,
-                help="기본은 운영 봇 12개. 일반 유저는 그 아래 활동량 순으로 정렬됨.",
+                help="봇 12개가 기본 선택. 일반 유저는 활동량 순으로 아래 정렬.",
             )
         with cc2:
             view_mode = st.radio(
@@ -1064,17 +1068,11 @@ with tab_hourly:
                 "시간 단위 (분)",
                 min_value=1,
                 max_value=1440,
-                value=60,
+                value=1,
                 step=1,
-                help=(
-                    "1 ~ 1440 사이 정수. "
-                    "1=1분, 5=5분, 30=30분, 60=1시간, 1440=1일. "
-                    "작을수록 변동 자세히 보이지만 차트 그리기 느려짐."
-                ),
+                help="1=1분(가장 세밀), 60=1시간, 1440=1일.",
             )
-        # pandas freq 문자열 — '7min', '15min' 등 임의의 분 단위 OK.
         h_freq = f"{int(h_minutes)}min"
-        # 차트 제목용 라벨.
         if h_minutes >= 1440:
             h_freq_label = f"{int(h_minutes // 1440)}일"
         elif h_minutes >= 60 and h_minutes % 60 == 0:
@@ -1085,41 +1083,47 @@ with tab_hourly:
             h_freq_label = f"{int(h_minutes)}분"
 
         with cc4:
-            # 사이드바 기간을 그대로 따르되, 더 좁게 자르고 싶으면 여기서 조정.
+            st.markdown("**조회 기간 (시·분 단위)**")
             ts_min, ts_max = ds.transaction_date_range
             if ts_min is None:
                 ts_min = ts_max = date.today()
-            sub_range = st.date_input(
-                "조회 기간 추가 좁히기 (선택사항)",
-                value=(ts_min, ts_max),
-                min_value=ts_min,
-                max_value=ts_max,
-                key="hourly_subrange",
-            )
-            if isinstance(sub_range, tuple) and len(sub_range) == 2:
-                h_start, h_end = sub_range
-            else:
-                h_start = h_end = sub_range  # type: ignore[assignment]
+            sc1, sc2 = st.columns(2)
+            with sc1:
+                start_d = st.date_input(
+                    "시작 날짜", value=ts_min, min_value=ts_min, max_value=ts_max,
+                    key="hourly_start_date",
+                )
+                start_t = st.time_input("시작 시각", value=time(0, 0), key="hourly_start_time", step=60)
+            with sc2:
+                end_d = st.date_input(
+                    "종료 날짜", value=ts_max, min_value=ts_min, max_value=ts_max,
+                    key="hourly_end_date",
+                )
+                end_t = st.time_input("종료 시각", value=time(23, 59), key="hourly_end_time", step=60)
 
-        if not picked:
+        h_start_dt = datetime.combine(start_d, start_t)
+        h_end_dt = datetime.combine(end_d, end_t)
+
+        if h_end_dt <= h_start_dt:
+            st.error("⚠️ 종료 시각이 시작 시각보다 이전이거나 같습니다.")
+        elif not picked:
             st.warning("지갑을 최소 1개 이상 선택하세요.")
         else:
             picked_ids = [option_to_id[label] for label in picked]
-
-            # 결과를 그릴 자리를 미리 잡아둠 (status 박스가 위, 결과가 아래).
             results_placeholder = st.container()
 
-            # ---- 진행 표시: 6단계 — 데이터 + 차트까지 모두 status 안에 ----
             with st.status("⏱️ 데이터 처리 중…", expanded=True) as status:
                 progress = st.progress(0)
+                _t0 = datetime.now()
 
-                # 1/6 시계열 집계
                 st.write(
-                    f"📥 1/6 — 트랜잭션 슬라이스 "
-                    f"({h_start} ~ {h_end}, 모드={selected_game_mode}, 지갑 {len(picked_ids)}개)"
+                    f"📥 1/6 — 슬라이스: "
+                    f"`{h_start_dt.strftime('%Y-%m-%d %H:%M')}` ~ "
+                    f"`{h_end_dt.strftime('%Y-%m-%d %H:%M')}` · "
+                    f"모드 {selected_game_mode} · 지갑 {len(picked_ids)}개"
                 )
                 progress.progress(10)
-                _t0 = datetime.now()
+
                 ts = _cached_user_timeseries(
                     snapshot_date=latest_choice,
                     data_root=data_root,
@@ -1127,8 +1131,8 @@ with tab_hourly:
                     exclude_system=exclude_system,
                     picked_ids=tuple(sorted(picked_ids)),
                     freq=h_freq,
-                    h_start_iso=h_start.isoformat() if h_start else "",
-                    h_end_iso=h_end.isoformat() if h_end else "",
+                    h_start_iso=h_start_dt.isoformat(),
+                    h_end_iso=h_end_dt.isoformat(),
                 )
                 _elapsed = (datetime.now() - _t0).total_seconds()
                 st.write(
@@ -1143,7 +1147,12 @@ with tab_hourly:
                     progress.progress(100)
                     status.update(label="⚠️ 데이터 없음", state="error", expanded=True)
                 else:
-                    # 3/6 차트 데이터 가공
+                    def _make_label(r):
+                        uid = int(r["user_id"])
+                        if uid in BOT_USER_IDS:
+                            return f"🤖 {BOT_USER_IDS[uid]}"
+                        return f"#{uid} {r['username'] or ''}".strip()
+
                     st.write("📊 3/6 — 차트 데이터 가공")
                     if view_mode == "선택 지갑 합산":
                         grouped = (
@@ -1163,18 +1172,10 @@ with tab_hourly:
                         series = grouped
                     else:
                         series = ts.copy()
-                        # 봇이면 'bot-XX' 라벨로, 아니면 user_id + username 으로.
-                        def _make_label(r):
-                            uid = int(r["user_id"])
-                            if uid in BOT_USER_IDS:
-                                return f"🤖 {BOT_USER_IDS[uid]}"
-                            return f"#{uid} {r['username'] or ''}".strip()
                         series["label"] = series.apply(_make_label, axis=1)
                     progress.progress(40)
 
-                    # ----- 결과 그리기 (status 안에서 진행 보여주면서, results_placeholder 에 출력) -----
                     with results_placeholder:
-                        # KPI
                         total_reward = float(series["block_reward"].sum())
                         total_spend = float(series["item_spend"].sum())
                         total_pnl = total_reward - total_spend
@@ -1188,10 +1189,10 @@ with tab_hourly:
                         with m4:
                             st.metric("순 PNL", _fmt_int(total_pnl))
 
-                    # 4/6 누적 PNL
-                    st.write(f"📈 4/6 — 누적 PNL 라인 차트 그리는 중 ({len(series):,}개 점)")
+                    st.write(f"📈 4/6 — 누적 PNL 라인 ({len(series):,}개 점)")
                     fig_cum = px.line(
-                        series, x="period", y="cum_pnl", color="label", markers=True,
+                        series, x="period", y="cum_pnl", color="label",
+                        markers=False,
                         title=f"누적 PNL — {h_freq_label} 단위",
                         labels={"period": "기간", "cum_pnl": "누적 PNL", "label": "지갑"},
                     )
@@ -1201,8 +1202,7 @@ with tab_hourly:
                         st.plotly_chart(fig_cum)
                     progress.progress(60)
 
-                    # 5/6 기간별 PNL
-                    st.write("📊 5/6 — 기간별 PNL 막대 그리는 중")
+                    st.write("📊 5/6 — 기간별 PNL 막대")
                     fig_bar = px.bar(
                         series, x="period", y="pnl", color="label", barmode="group",
                         title=f"기간별 PNL — {h_freq_label}",
@@ -1210,12 +1210,11 @@ with tab_hourly:
                     )
                     fig_bar.add_hline(y=0, line_color="white")
                     with results_placeholder:
-                        st.markdown("### 기간별 PNL (양수=흑자, 음수=적자)")
+                        st.markdown("### 기간별 PNL")
                         st.plotly_chart(fig_bar)
-                    progress.progress(80)
+                    progress.progress(75)
 
-                    # 6/6 보상 vs 지출
-                    st.write("🎨 6/6 — 보상/지출 분리 차트")
+                    st.write("🎨 6/6 — 보상/지출 분리 + CSV 준비")
                     fig_rw = px.bar(
                         series, x="period", y="block_reward", color="label", barmode="group",
                         title=f"블록 보상 — {h_freq_label}",
@@ -1234,16 +1233,55 @@ with tab_hourly:
                         with cc6:
                             st.plotly_chart(fig_sp)
 
-                        with st.expander("시계열 원본"):
-                            st.dataframe(ts, width="stretch")
+                        # ---- CSV Export ----
+                        st.markdown("### 📥 CSV 내보내기")
+                        ts_with_label = ts.copy()
+                        ts_with_label["label"] = ts_with_label.apply(_make_label, axis=1)
+
+                        ec1, ec2 = st.columns(2)
+                        with ec1:
                             st.download_button(
-                                "시계열 CSV 다운로드",
-                                data=ts.to_csv(index=False).encode("utf-8-sig"),
-                                file_name=_ts_filename(
-                                    f"timeseries_{h_freq}_{'_'.join(map(str, picked_ids))}", "csv"
-                                ),
+                                "📊 전체 통합 CSV (long format)",
+                                data=ts_with_label.to_csv(index=False).encode("utf-8-sig"),
+                                file_name=_ts_filename(f"timeseries_combined_{h_freq}", "csv"),
                                 mime="text/csv",
+                                help="모든 선택 지갑이 한 파일에. 엑셀 피벗테이블 만들기 좋음.",
                             )
+                        with ec2:
+                            wide_pnl = ts_with_label.pivot_table(
+                                index="period", columns="label", values="pnl", aggfunc="sum"
+                            ).fillna(0).reset_index()
+                            st.download_button(
+                                "📋 Wide CSV (period × 지갑별 PNL)",
+                                data=wide_pnl.to_csv(index=False).encode("utf-8-sig"),
+                                file_name=_ts_filename(f"timeseries_wide_pnl_{h_freq}", "csv"),
+                                mime="text/csv",
+                                help="행=기간, 열=지갑별 PNL. 엑셀 차트 그리기 좋음.",
+                            )
+
+                        st.markdown("**지갑별 개별 CSV** — 봇/유저마다 따로")
+                        unique_users = ts["user_id"].unique()
+                        n_cols = min(4, len(unique_users))
+                        if n_cols > 0:
+                            cols = st.columns(n_cols)
+                            for i, uid in enumerate(unique_users):
+                                sub = ts[ts["user_id"] == int(uid)].copy()
+                                sub_label = (
+                                    BOT_USER_IDS.get(int(uid))
+                                    or sub.iloc[0].get("username", "?")
+                                    or f"user_{int(uid)}"
+                                )
+                                with cols[i % n_cols]:
+                                    st.download_button(
+                                        f"💼 {sub_label}",
+                                        data=sub.to_csv(index=False).encode("utf-8-sig"),
+                                        file_name=_ts_filename(f"timeseries_{sub_label}_{h_freq}", "csv"),
+                                        mime="text/csv",
+                                        key=f"dl_wallet_{uid}",
+                                    )
+
+                        with st.expander("시계열 원본 (전체 행)"):
+                            st.dataframe(ts_with_label, width="stretch")
 
                     progress.progress(100)
                     total_elapsed = (datetime.now() - _t0).total_seconds()
