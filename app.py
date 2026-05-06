@@ -78,6 +78,46 @@ def _cached_snapshot(date_str: str, data_root: str):
     return load_snapshot(date_str, data_root=data_root)
 
 
+@st.cache_data(show_spinner="시계열 계산 중…", max_entries=20)
+def _cached_user_timeseries(
+    snapshot_date: str,
+    data_root: str,
+    mode_filter: str | None,
+    exclude_system: bool,
+    picked_ids: tuple[int, ...],
+    freq: str,
+    h_start_iso: str,
+    h_end_iso: str,
+):
+    """캐시 가능한 시계열 wrapper.
+
+    위젯 입력이 같으면 즉시 캐시 반환 — 로딩 체감 속도 극적으로 단축.
+    """
+    ds = load_snapshot(snapshot_date, data_root=data_root)
+    if mode_filter:
+        ds = ds.filter_by_game_mode(mode_filter)
+    if h_start_iso and h_end_iso:
+        ds = ds.filter_by_date_range(h_start_iso, h_end_iso)
+    return compute_user_timeseries(
+        ds,
+        user_ids=list(picked_ids) if picked_ids else None,
+        freq=freq,
+        exclude_system_users=exclude_system,
+        fill_gaps=False,
+    )
+
+
+@st.cache_data(show_spinner=False, max_entries=10)
+def _cached_user_pnl(snapshot_date: str, data_root: str, mode_filter: str | None,
+                    exclude_system: bool, start_iso: str, end_iso: str):
+    ds = load_snapshot(snapshot_date, data_root=data_root)
+    if mode_filter:
+        ds = ds.filter_by_game_mode(mode_filter)
+    if start_iso and end_iso:
+        ds = ds.filter_by_date_range(start_iso, end_iso)
+    return compute_user_pnl(ds, exclude_system_users=exclude_system)
+
+
 def _fmt_int(v) -> str:
     if v is None or pd.isna(v):
         return "—"
@@ -838,17 +878,15 @@ with tab_hourly:
         "선택한 지갑들만 필터해서 계산하므로 빠르게 뜹니다."
     )
 
-    # ---- 지갑(유저) 후보 선정: PNL 표 기준 (이미 quest/system 필터 반영됨) ----
-    pnl_for_picker = compute_user_pnl(ds, exclude_system_users=exclude_system)
-    if exclude_system and not pnl_for_picker.empty and ds.system_user_ids:
-        pnl_for_picker = pnl_for_picker[
-            ~pnl_for_picker["user_id"].isin(ds.system_user_ids)
-        ].reset_index(drop=True)
-    if not pnl_for_picker.empty and ds.quest_user_ids:
-        pnl_for_picker = pnl_for_picker[
-            ~pnl_for_picker["user_id"].isin(ds.quest_user_ids)
-        ].reset_index(drop=True)
-
+    # ---- 지갑(유저) 후보 선정: 캐시된 PNL 표 기준 ----
+    # 사이드바 ds 의 트랜잭션 범위를 ISO 문자열로 만들어 캐시 키에 포함.
+    _t_min, _t_max = ds.transaction_date_range
+    if _t_min is None:
+        _t_min = _t_max = date.today()
+    pnl_for_picker = _cached_user_pnl(
+        latest_choice, data_root, mode_filter_for_ds, exclude_system,
+        _t_min.isoformat(), _t_max.isoformat(),
+    )
     if pnl_for_picker.empty:
         st.info("선택된 모드/기간에 트랜잭션이 있는 유저가 없습니다.")
     else:
@@ -912,12 +950,16 @@ with tab_hourly:
             st.warning("지갑을 최소 1개 이상 선택하세요.")
         else:
             picked_ids = [option_to_id[label] for label in picked]
-            ds_for_chart = ds.filter_by_date_range(h_start, h_end)
-            ts = compute_user_timeseries(
-                ds_for_chart,
-                user_ids=picked_ids,
+            # 캐시된 시계열 호출 — 동일 입력 재호출 시 즉시 반환.
+            ts = _cached_user_timeseries(
+                snapshot_date=latest_choice,
+                data_root=data_root,
+                mode_filter=mode_filter_for_ds,
+                exclude_system=exclude_system,
+                picked_ids=tuple(sorted(picked_ids)),
                 freq=h_freq,
-                exclude_system_users=exclude_system,
+                h_start_iso=h_start.isoformat() if h_start else "",
+                h_end_iso=h_end.isoformat() if h_end else "",
             )
 
             if ts.empty:

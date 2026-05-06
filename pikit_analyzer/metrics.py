@@ -362,50 +362,32 @@ def compute_user_timeseries(
     user_ids: list[int] | None = None,
     freq: str = "D",
     exclude_system_users: bool = True,
+    fill_gaps: bool = False,
 ) -> pd.DataFrame:
     """Resample transactions into a per-(period, user) time series.
 
-    Parameters
-    ----------
-    user_ids : list[int] | None
-        Only include these users. None → all users in the (already-filtered) tx log.
-    freq : str
-        Pandas offset alias. "D" = day, "H" = hour, "15min" = 15 min, etc.
+    `fill_gaps=False` (기본) — 활동 없는 (period,user) 셀은 행을 만들지 않음.
+    `fill_gaps=True` — 빈 셀을 0으로 채워 라인 차트가 끊기지 않게 (느림).
 
-    Returns
-    -------
-    DataFrame with columns:
-        period          — period start (UTC tz-aware Timestamp)
-        user_id         — int
-        username        — str
-        block_reward    — credits earned this period
-        item_spend      — credits spent on items this period (positive)
-        credit_charged  — demo credits issued this period
-        pnl             — block_reward - item_spend
-        tx_count        — number of transactions
-        cum_pnl         — cumulative PNL within this user's series
-        cum_block_reward, cum_item_spend — cumulative versions
+    필터 순서를 (1) user_ids → (2) quest → (3) system 으로 바꿔서 큰 카피가
+    먼저 줄어들도록 했습니다. 이게 1분 단위 60만 건 트랜잭션에서 가장 큰 win.
     """
-    tx = ds.filter_real_users(ds.transactions)  # quest 픽스처는 항상 제외
-    if exclude_system_users:
-        tx = ds.filter_system_users(tx)
+    tx = ds.transactions
+
+    # 가장 강한 필터부터 — 데이터 양을 즉시 줄여서 이후 작업이 가벼워짐.
     if user_ids is not None:
         tx = tx[tx["user_id"].isin(user_ids)]
+    if ds.quest_user_ids:
+        tx = tx[~tx["user_id"].isin(ds.quest_user_ids)]
+    if exclude_system_users and ds.system_user_ids:
+        tx = tx[~tx["user_id"].isin(ds.system_user_ids)]
 
     if tx.empty:
         return pd.DataFrame(
             columns=[
-                "period",
-                "user_id",
-                "username",
-                "block_reward",
-                "item_spend",
-                "credit_charged",
-                "pnl",
-                "tx_count",
-                "cum_pnl",
-                "cum_block_reward",
-                "cum_item_spend",
+                "period", "user_id", "username", "block_reward", "item_spend",
+                "credit_charged", "pnl", "tx_count", "cum_pnl",
+                "cum_block_reward", "cum_item_spend",
             ]
         )
 
@@ -435,9 +417,9 @@ def compute_user_timeseries(
     out = pivot.join(counts).fillna(0).reset_index()
     out["pnl"] = out["block_reward"] - out["item_spend"]
 
-    # Fill the index so every (user, period) gap shows up as zero — keeps line
-    # charts continuous instead of skipping idle hours/days.
-    if not out.empty:
+    # 빈 (user, period) 셀 0 으로 채우기 — 옵션화. 1분 단위로 4320 period * N 유저
+    # 를 곱하면 매트릭스가 폭증해서 느려집니다.
+    if fill_gaps and not out.empty:
         period_min = out["period"].min()
         period_max = out["period"].max()
         all_periods = pd.date_range(period_min, period_max, freq=freq)
