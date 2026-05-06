@@ -1044,15 +1044,20 @@ with tab_hourly:
         else:
             picked_ids = [option_to_id[label] for label in picked]
 
-            # ---- 진행 표시: 단계별 메시지 ----
+            # 결과를 그릴 자리를 미리 잡아둠 (status 박스가 위, 결과가 아래).
+            results_placeholder = st.container()
+
+            # ---- 진행 표시: 6단계 — 데이터 + 차트까지 모두 status 안에 ----
             with st.status("⏱️ 데이터 처리 중…", expanded=True) as status:
                 progress = st.progress(0)
 
-                st.write(f"📥 1/4 — 트랜잭션 슬라이스 ({h_start} ~ {h_end}, 모드={selected_game_mode})")
-                progress.progress(15)
+                # 1/6 시계열 집계
+                st.write(
+                    f"📥 1/6 — 트랜잭션 슬라이스 "
+                    f"({h_start} ~ {h_end}, 모드={selected_game_mode}, 지갑 {len(picked_ids)}개)"
+                )
+                progress.progress(10)
                 _t0 = datetime.now()
-
-                # 캐시된 시계열 호출 — 동일 입력이면 즉시 반환.
                 ts = _cached_user_timeseries(
                     snapshot_date=latest_choice,
                     data_root=data_root,
@@ -1065,20 +1070,19 @@ with tab_hourly:
                 )
                 _elapsed = (datetime.now() - _t0).total_seconds()
                 st.write(
-                    f"⏱️ 2/4 — 시계열 집계 완료 · {len(ts):,}개 행 · "
+                    f"⏱️ 2/6 — 시계열 집계 완료 · **{len(ts):,}개 행** · "
                     f"{h_freq_label} 단위 · {_elapsed:.2f}초 "
                     f"{'(캐시 적중 ⚡)' if _elapsed < 0.05 else ''}"
                 )
-                progress.progress(50)
+                progress.progress(25)
 
                 if ts.empty:
                     st.write("⚠️ 트랜잭션 없음")
                     progress.progress(100)
-                    status.update(label="데이터 없음", state="error", expanded=True)
+                    status.update(label="⚠️ 데이터 없음", state="error", expanded=True)
                 else:
-                    # ----- 합산 / 개별 모드에 맞춰 데이터 정리 -----
-                    st.write("📊 3/4 — 차트 데이터 가공")
-                    progress.progress(75)
+                    # 3/6 차트 데이터 가공
+                    st.write("📊 3/6 — 차트 데이터 가공")
                     if view_mode == "선택 지갑 합산":
                         grouped = (
                             ts.groupby("period")
@@ -1100,88 +1104,87 @@ with tab_hourly:
                         series["label"] = series.apply(
                             lambda r: f"#{int(r['user_id'])} {r['username'] or ''}".strip(), axis=1
                         )
+                    progress.progress(40)
 
-                    st.write(f"🎨 4/4 — 차트 렌더 ({len(series):,}개 데이터 포인트)")
-                    progress.progress(100)
-                    status.update(label="✓ 완료", state="complete", expanded=False)
+                    # ----- 결과 그리기 (status 안에서 진행 보여주면서, results_placeholder 에 출력) -----
+                    with results_placeholder:
+                        # KPI
+                        total_reward = float(series["block_reward"].sum())
+                        total_spend = float(series["item_spend"].sum())
+                        total_pnl = total_reward - total_spend
+                        m1, m2, m3, m4 = st.columns(4)
+                        with m1:
+                            st.metric("선택 지갑", f"{len(picked_ids)}개")
+                        with m2:
+                            st.metric("총 블록 보상", _fmt_int(total_reward))
+                        with m3:
+                            st.metric("총 아이템 지출", _fmt_int(total_spend))
+                        with m4:
+                            st.metric("순 PNL", _fmt_int(total_pnl))
 
-            if ts.empty:
-                pass  # 위에서 이미 표시
-            else:
+                    # 4/6 누적 PNL
+                    st.write(f"📈 4/6 — 누적 PNL 라인 차트 그리는 중 ({len(series):,}개 점)")
+                    fig_cum = px.line(
+                        series, x="period", y="cum_pnl", color="label", markers=True,
+                        title=f"누적 PNL — {h_freq_label} 단위",
+                        labels={"period": "기간", "cum_pnl": "누적 PNL", "label": "지갑"},
+                    )
+                    fig_cum.add_hline(y=0, line_dash="dot", line_color="white")
+                    with results_placeholder:
+                        st.markdown("### 누적 PNL 추이")
+                        st.plotly_chart(fig_cum)
+                    progress.progress(60)
 
-                # ----- KPI 카드 -----
-                total_reward = float(series["block_reward"].sum())
-                total_spend = float(series["item_spend"].sum())
-                total_pnl = total_reward - total_spend
-                total_tx = int(series["tx_count"].sum())
-                m1, m2, m3, m4 = st.columns(4)
-                with m1:
-                    st.metric("선택 지갑", f"{len(picked_ids)}개")
-                with m2:
-                    st.metric("총 블록 보상", _fmt_int(total_reward))
-                with m3:
-                    st.metric("총 아이템 지출", _fmt_int(total_spend))
-                with m4:
-                    st.metric("순 PNL", _fmt_int(total_pnl))
+                    # 5/6 기간별 PNL
+                    st.write("📊 5/6 — 기간별 PNL 막대 그리는 중")
+                    fig_bar = px.bar(
+                        series, x="period", y="pnl", color="label", barmode="group",
+                        title=f"기간별 PNL — {h_freq_label}",
+                        labels={"period": "기간", "pnl": "PNL", "label": "지갑"},
+                    )
+                    fig_bar.add_hline(y=0, line_color="white")
+                    with results_placeholder:
+                        st.markdown("### 기간별 PNL (양수=흑자, 음수=적자)")
+                        st.plotly_chart(fig_bar)
+                    progress.progress(80)
 
-                # ----- 누적 PNL 라인 -----
-                st.markdown("### 누적 PNL 추이")
-                fig_cum = px.line(
-                    series,
-                    x="period",
-                    y="cum_pnl",
-                    color="label",
-                    markers=True,
-                    title=f"누적 PNL — {h_freq_label} 단위",
-                    labels={"period": "기간", "cum_pnl": "누적 PNL", "label": "지갑"},
-                )
-                fig_cum.add_hline(y=0, line_dash="dot", line_color="white")
-                st.plotly_chart(fig_cum)
-
-                # ----- 기간별 PNL 바 -----
-                st.markdown("### 기간별 PNL (양수=흑자, 음수=적자)")
-                fig_bar = px.bar(
-                    series,
-                    x="period",
-                    y="pnl",
-                    color="label",
-                    barmode="group",
-                    title=f"기간별 PNL — {h_freq_label}",
-                    labels={"period": "기간", "pnl": "PNL", "label": "지갑"},
-                )
-                fig_bar.add_hline(y=0, line_color="white")
-                st.plotly_chart(fig_bar)
-
-                # ----- 보상 vs 지출 -----
-                st.markdown("### 보상 / 지출 분리")
-                cc5, cc6 = st.columns(2)
-                with cc5:
+                    # 6/6 보상 vs 지출
+                    st.write("🎨 6/6 — 보상/지출 분리 차트")
                     fig_rw = px.bar(
-                        series, x="period", y="block_reward", color="label",
-                        barmode="group",
+                        series, x="period", y="block_reward", color="label", barmode="group",
                         title=f"블록 보상 — {h_freq_label}",
                         labels={"period": "기간", "block_reward": "블록 보상", "label": "지갑"},
                     )
-                    st.plotly_chart(fig_rw)
-                with cc6:
                     fig_sp = px.bar(
-                        series, x="period", y="item_spend", color="label",
-                        barmode="group",
+                        series, x="period", y="item_spend", color="label", barmode="group",
                         title=f"아이템 지출 — {h_freq_label}",
                         labels={"period": "기간", "item_spend": "아이템 지출", "label": "지갑"},
                     )
-                    st.plotly_chart(fig_sp)
+                    with results_placeholder:
+                        st.markdown("### 보상 / 지출 분리")
+                        cc5, cc6 = st.columns(2)
+                        with cc5:
+                            st.plotly_chart(fig_rw)
+                        with cc6:
+                            st.plotly_chart(fig_sp)
 
-                # ----- 원본 표 -----
-                with st.expander("시계열 원본"):
-                    st.dataframe(ts, width="stretch")
-                    st.download_button(
-                        "시계열 CSV 다운로드",
-                        data=ts.to_csv(index=False).encode("utf-8-sig"),
-                        file_name=_ts_filename(
-                            f"timeseries_{h_freq}_{'_'.join(map(str, picked_ids))}", "csv"
-                        ),
-                        mime="text/csv",
+                        with st.expander("시계열 원본"):
+                            st.dataframe(ts, width="stretch")
+                            st.download_button(
+                                "시계열 CSV 다운로드",
+                                data=ts.to_csv(index=False).encode("utf-8-sig"),
+                                file_name=_ts_filename(
+                                    f"timeseries_{h_freq}_{'_'.join(map(str, picked_ids))}", "csv"
+                                ),
+                                mime="text/csv",
+                            )
+
+                    progress.progress(100)
+                    total_elapsed = (datetime.now() - _t0).total_seconds()
+                    status.update(
+                        label=f"✓ 완료 — 총 {total_elapsed:.2f}초",
+                        state="complete",
+                        expanded=False,
                     )
 
 
