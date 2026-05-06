@@ -8,6 +8,10 @@ from .metrics import (
     compute_user_timeseries,
     compute_user_block_breakdown,
     compute_user_item_breakdown,
+    compute_winning_moments,
+    compute_user_pnl_path,
+    compute_per_summon_returns,
+    summarize_per_summon,
 )
 from .balance import (
     recommend_item_changes,
@@ -35,6 +39,10 @@ __all__ = [
     "compute_user_timeseries",
     "compute_user_block_breakdown",
     "compute_user_item_breakdown",
+    "compute_winning_moments",
+    "compute_user_pnl_path",
+    "compute_per_summon_returns",
+    "summarize_per_summon",
     "recommend_item_changes",
     "recommend_block_changes",
     "simulate_balance",

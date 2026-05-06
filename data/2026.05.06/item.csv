@@ -1,3 +1,4 @@
+id,name,description,category,price,scale,weight,attack,duration,created_at,updated_at,deleted_at
 1,Basic Pickaxe,Standard size and light weight. Highly durable with basic damage.,NORMAL,1000,1,1,27.23,30000,2026-05-04 08:57:17.114699+00,2026-05-04 09:01:49.836011+00,
 2,Power Pickaxe,Large size and solid weight. Durable with strong damage.,NORMAL,2000,1.25,1.56,59.4,27500,2026-05-04 08:57:17.114699+00,2026-05-04 09:01:50.39399+00,
 3,Light Pickaxe,Giant size and heavy weight. Moderately durable with severe damage.,NORMAL,3000,1.5,2.25,98.02,25000,2026-05-04 08:57:17.114699+00,2026-05-04 09:01:50.945484+00,

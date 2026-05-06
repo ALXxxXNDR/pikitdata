@@ -530,6 +530,251 @@ def compute_user_item_breakdown(
 
 
 # ---------------------------------------------------------------------------
+# Winning Moments — "유저가 잠깐이라도 이긴 순간이 있었는가"
+# ---------------------------------------------------------------------------
+
+def compute_winning_moments(
+    ds: PikitDataset,
+    exclude_system_users: bool = True,
+) -> pd.DataFrame:
+    """유저별 누적 PNL 곡선의 형태 분석.
+
+    게임은 장기적으로 시스템(곡괭이 가격) 이 유저보다 유리하게 설계되더라도,
+    유저 입장에서는 *잠깐이라도* 자기 PNL 이 양수로 솟아오른 순간이 있어야
+    재미·재방문이 일어납니다. 이 함수는 그 "승리 경험"을 정량화합니다.
+
+    반환 컬럼
+    ----------
+    user_id, username
+    n_tx              : 트랜잭션 수
+    final_pnl         : 마지막 누적 PNL
+    peak_pnl          : 누적 PNL 최댓값 (가장 흑자였을 때)
+    peak_at           : peak_pnl 시각
+    time_to_peak_min  : 첫 트랜잭션 → peak 까지 걸린 분
+    time_above_zero_pct : 누적 PNL > 0 였던 시간 비율
+    max_drawdown      : peak − final
+    max_drawdown_pct  : peak 대비 떨어진 비율
+    longest_winning_streak : BLOCK_REWARD 연속 트랜잭션 최장
+    had_winning_moment : 한 번이라도 흑자였는가
+    excitement_score  : 변동성 + 승리경험 + 흑자체류시간의 가중 합 (0~1)
+    """
+    tx = ds.filter_real_users(ds.transactions)
+    if exclude_system_users:
+        tx = ds.filter_system_users(tx)
+    if tx.empty:
+        return pd.DataFrame()
+
+    tx = tx.copy()
+    tx["abs_amount"] = tx["amount"].abs()
+    tx["signed"] = np.where(
+        tx["tx_type"] == "BLOCK_REWARD", tx["abs_amount"],
+        np.where(tx["tx_type"] == "ITEM_PURCHASE", -tx["abs_amount"], 0),
+    )
+    tx = tx.sort_values(["user_id", "created_at"]).reset_index(drop=True)
+
+    rows = []
+    for uid, sub in tx.groupby("user_id", sort=False):
+        s = sub.sort_values("created_at")
+        cum = s["signed"].cumsum()
+        ts = s["created_at"]
+
+        peak_pnl = float(cum.max()) if not cum.empty else 0.0
+        peak_idx = cum.idxmax() if not cum.empty else None
+        peak_at = ts.loc[peak_idx] if peak_idx is not None else pd.NaT
+        first_t = ts.iloc[0]
+        last_t = ts.iloc[-1]
+
+        time_to_peak_min = (
+            (peak_at - first_t).total_seconds() / 60 if pd.notna(peak_at) else 0
+        )
+        total_seconds = max((last_t - first_t).total_seconds(), 1)
+
+        deltas = s["created_at"].diff().shift(-1).dt.total_seconds().fillna(0)
+        positive_weighted = float(deltas[cum.values > 0].sum()) if not cum.empty else 0.0
+        time_above_zero_pct = positive_weighted / total_seconds if total_seconds else 0.0
+
+        max_dd = max(peak_pnl - float(cum.iloc[-1]), 0) if not cum.empty else 0
+        max_dd_pct = (max_dd / peak_pnl) if peak_pnl > 0 else None
+
+        is_reward = (s["tx_type"] == "BLOCK_REWARD").astype(int).values
+        longest_streak = 0
+        cur = 0
+        for v in is_reward:
+            if v:
+                cur += 1
+                longest_streak = max(longest_streak, cur)
+            else:
+                cur = 0
+
+        had_winning_moment = peak_pnl > 0
+        std_pnl = float(cum.std()) if len(cum) > 1 else 0.0
+        norm_std = min(std_pnl / 1_000_000, 1.0)
+        score = 0.4 * norm_std + 0.4 * float(had_winning_moment) + 0.2 * float(time_above_zero_pct)
+
+        rows.append({
+            "user_id": int(uid),
+            "n_tx": int(len(s)),
+            "final_pnl": float(cum.iloc[-1]) if not cum.empty else 0.0,
+            "peak_pnl": peak_pnl,
+            "peak_at": peak_at,
+            "time_to_peak_min": float(time_to_peak_min),
+            "time_above_zero_pct": float(time_above_zero_pct),
+            "max_drawdown": float(max_dd),
+            "max_drawdown_pct": max_dd_pct,
+            "longest_winning_streak": int(longest_streak),
+            "had_winning_moment": bool(had_winning_moment),
+            "excitement_score": float(score),
+            "first_tx": first_t,
+            "last_tx": last_t,
+        })
+    out = pd.DataFrame(rows)
+    if not out.empty:
+        users = ds.users[["user_id", "username"]]
+        out = out.merge(users, on="user_id", how="left")
+    return out.sort_values("excitement_score", ascending=False, ignore_index=True)
+
+
+def compute_user_pnl_path(
+    ds: PikitDataset,
+    user_ids: list[int] | None = None,
+    exclude_system_users: bool = True,
+) -> pd.DataFrame:
+    """유저별 누적 PNL 곡선 시계열 (그래프용)."""
+    tx = ds.filter_real_users(ds.transactions)
+    if exclude_system_users:
+        tx = ds.filter_system_users(tx)
+    if user_ids is not None:
+        tx = tx[tx["user_id"].isin(user_ids)]
+    if tx.empty:
+        return pd.DataFrame(columns=["user_id", "username", "created_at", "signed_amount", "cum_pnl"])
+
+    tx = tx.copy()
+    tx["abs_amount"] = tx["amount"].abs()
+    tx["signed_amount"] = np.where(
+        tx["tx_type"] == "BLOCK_REWARD", tx["abs_amount"],
+        np.where(tx["tx_type"] == "ITEM_PURCHASE", -tx["abs_amount"], 0),
+    )
+    tx = tx.sort_values(["user_id", "created_at"])
+    tx["cum_pnl"] = tx.groupby("user_id")["signed_amount"].cumsum()
+    users = ds.users[["user_id", "username"]]
+    return tx[["user_id", "created_at", "signed_amount", "cum_pnl"]].merge(
+        users, on="user_id", how="left"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Per-summon credit return — 곡괭이 한 번 구매당 가져온 보상
+# ---------------------------------------------------------------------------
+
+def compute_per_summon_returns(
+    ds: PikitDataset,
+    exclude_system_users: bool = True,
+) -> pd.DataFrame:
+    """곡괭이 1회 소환(구매) 당 net 수익 분포.
+
+    윈도우 = [구매 시각, min(다음 구매 시각, 구매 시각 + duration_ms)).
+    그 윈도우 안에서 동일 유저의 BLOCK_REWARD 합산.
+
+    한 행 = 한 번의 구매. 컬럼: user_id, item_id, item_name, mode, category,
+    price, attack, duration_ms, purchased_at, ended_at, gross_reward,
+    net_pnl, roi.
+    """
+    tx = ds.filter_real_users(ds.transactions)
+    if exclude_system_users:
+        tx = ds.filter_system_users(tx)
+    if tx.empty:
+        return pd.DataFrame()
+
+    items = ds.items[
+        ["item_id", "name", "mode", "category", "price", "attack", "duration_ms"]
+    ].rename(columns={"name": "item_name"}).set_index("item_id")
+
+    tx = tx.copy()
+    tx["abs_amount"] = tx["amount"].abs()
+    tx = tx.sort_values(["user_id", "created_at"])
+
+    purchases = tx[tx["tx_type"] == "ITEM_PURCHASE"].copy()
+    rewards = tx[tx["tx_type"] == "BLOCK_REWARD"].copy()
+    if purchases.empty:
+        return pd.DataFrame()
+
+    purchases = purchases.sort_values(["user_id", "created_at"]).reset_index(drop=True)
+    purchases["next_purchase_at"] = purchases.groupby("user_id")["created_at"].shift(-1)
+    purchases["item_id_int"] = purchases["source_id"].astype("Int64")
+
+    rewards_by_user = {uid: g.sort_values("created_at") for uid, g in rewards.groupby("user_id")}
+
+    rows = []
+    for _, p in purchases.iterrows():
+        uid = int(p["user_id"])
+        item_id_int = p["item_id_int"]
+        if pd.isna(item_id_int):
+            continue
+        item_id = int(item_id_int)
+        if item_id not in items.index:
+            continue
+        info = items.loc[item_id]
+        duration_ms = float(info["duration_ms"]) if pd.notna(info["duration_ms"]) else 0
+        t_buy = p["created_at"]
+        t_dur_end = t_buy + pd.Timedelta(milliseconds=duration_ms) if duration_ms else t_buy
+        t_next = p["next_purchase_at"]
+        t_end = min(t_next, t_dur_end) if pd.notna(t_next) else t_dur_end
+
+        user_rewards = rewards_by_user.get(uid)
+        gross = 0.0
+        if user_rewards is not None:
+            mask = (user_rewards["created_at"] >= t_buy) & (user_rewards["created_at"] < t_end)
+            gross = float(user_rewards.loc[mask, "abs_amount"].sum())
+
+        price = float(info["price"]) if pd.notna(info["price"]) else 0
+        net = gross - price
+        roi = (net / price) if price > 0 else None
+
+        rows.append({
+            "user_id": uid,
+            "item_id": item_id,
+            "item_name": info["item_name"],
+            "mode": info["mode"],
+            "category": info["category"],
+            "price": price,
+            "attack": float(info["attack"]) if pd.notna(info["attack"]) else None,
+            "duration_ms": duration_ms,
+            "purchased_at": t_buy,
+            "ended_at": t_end,
+            "gross_reward": gross,
+            "net_pnl": net,
+            "roi": roi,
+        })
+
+    return pd.DataFrame(rows)
+
+
+def summarize_per_summon(per_summon: pd.DataFrame) -> pd.DataFrame:
+    """곡괭이별 소환 결과 분포 요약 — mean/median/percentile/win_rate."""
+    if per_summon.empty:
+        return pd.DataFrame()
+    grouped = per_summon.groupby(
+        ["item_id", "item_name", "mode", "category", "price", "attack", "duration_ms"],
+        dropna=False,
+    )
+    summary = grouped.agg(
+        summons=("net_pnl", "size"),
+        unique_buyers=("user_id", "nunique"),
+        gross_mean=("gross_reward", "mean"),
+        gross_median=("gross_reward", "median"),
+        net_pnl_mean=("net_pnl", "mean"),
+        net_pnl_median=("net_pnl", "median"),
+        net_pnl_p25=("net_pnl", lambda s: float(np.percentile(s, 25))),
+        net_pnl_p75=("net_pnl", lambda s: float(np.percentile(s, 75))),
+        net_pnl_p95=("net_pnl", lambda s: float(np.percentile(s, 95))),
+        roi_mean=("roi", "mean"),
+        roi_median=("roi", "median"),
+        win_rate=("net_pnl", lambda s: float((s > 0).mean())),
+    ).reset_index()
+    return summary.sort_values(["mode", "category", "price"]).reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
 # Top-level KPI summary
 # ---------------------------------------------------------------------------
 

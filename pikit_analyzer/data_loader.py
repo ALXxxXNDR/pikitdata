@@ -1,10 +1,12 @@
 """
 Loads PIKIT beta CSV snapshots into typed pandas DataFrames.
 
-The raw CSVs have no header rows. Column schemas were inferred from observed
-data and the in-game economy (e.g. block drop rates summing to 1, pickaxe
-attack/duration scaling). All schemas are documented at the top of each
-loader function below.
+베타 후반에 데이터 스키마가 헤더 포함 + 깔끔한 컬럼명으로 정비됐습니다.
+이 로더는 두 포맷을 모두 지원합니다 — 새 헤더가 있으면 그걸 따라 읽고 내부
+이름으로 rename, 없으면 옛 위치 기반 컬럼 목록으로 fallback.
+
+내부 컬럼 이름은 *그대로 유지* 합니다 (block_id, mode, hp, drop_rate,
+tx_type, direction, source_id 등) — 다른 모든 분석 코드가 이 이름을 쓰기 때문에.
 """
 from __future__ import annotations
 
@@ -164,6 +166,86 @@ USER_ATTENDANCE_COLS = [
 
 
 # ---------------------------------------------------------------------------
+# 새 외부 헤더 → 내부 컬럼명 매핑.
+# 외부에서 추가된 컬럼은 내부 이름으로 옮기고, 사라진 컬럼은 기본값으로 채움.
+# ---------------------------------------------------------------------------
+
+BLOCK_RENAME = {
+    "id": "block_id",
+    "category": "mode",
+    "ratio": "drop_rate",
+    "health": "hp",
+    "deleted_at": "extra",
+    # name, reward, created_at, updated_at, description 은 그대로
+}
+BLOCK_INTERNAL_DEFAULTS = {"display_name": ""}  # 새 스키마엔 별도 display_name 없음
+
+ITEM_RENAME = {
+    "id": "item_id",
+    "category": "mode",
+    "scale": "size_mult",
+    "weight": "weight_mult",
+    "duration": "duration_ms",
+    "deleted_at": "extra",
+}
+
+GAME_RENAME = {
+    "id": "game_id",
+    "name": "mode_name",
+    "max_users": "param_a",
+    "map_width": "param_b",
+    "map_height": "param_c",
+    "deleted_at": "extra",
+}
+
+USER_RENAME = {
+    "id": "user_id",
+    "name": "username",
+    "credit": "balance",
+    "demo_credit": "demo_balance",
+    "deleted_at": "extra",
+    # bonus 는 새 컬럼 — 그대로 유지하면서 lifetime_credit 도 호환용으로 둡니다.
+}
+
+USER_STATS_RENAME = {
+    "total_demo_credit_earned": "total_block_reward",   # NORMAL 모드 보상 누적
+    "total_demo_credit_spent": "total_item_spend",      # NORMAL 모드 지출 누적
+    # 나머지는 그대로 — total_credit_earned/spent, total_bonus_earned/spent, total_pnl
+}
+
+GAME_USER_STATS_RENAME = USER_STATS_RENAME
+
+USER_BLOCK_RENAME = {
+    "break_count": "count",
+    # first_seen / last_seen 은 새 스키마에서 created_at/updated_at 으로 바뀜
+    "created_at": "first_seen",
+    "updated_at": "last_seen",
+}
+
+USER_ITEM_RENAME = {
+    "purchase_count": "count",
+    "created_at": "first_seen",
+    "updated_at": "last_seen",
+}
+
+USER_ATTENDANCE_RENAME = {
+    "attendance_days": "total_days",
+    "attendance_streak": "streak",
+    "last_attended_at": "last_attendance",
+    "created_at": "first_attendance",
+}
+
+TX_RENAME = {
+    "id": "tx_id",
+    "event_type": "tx_type",
+    "currency_type": "direction",
+    "ref_type": "source_type",
+    "ref_id": "source_id",
+    "memo": "message",
+}
+
+
+# ---------------------------------------------------------------------------
 # Snapshot model
 # ---------------------------------------------------------------------------
 
@@ -320,27 +402,73 @@ class PikitDataset:
 # Loader helpers
 # ---------------------------------------------------------------------------
 
-def _read_csv(path: Path, columns: list[str]) -> pd.DataFrame:
-    """Read a headerless CSV with a fixed column list, padding/trimming as needed."""
+def _read_csv(
+    path: Path,
+    fallback_columns: list[str],
+    rename_map: dict[str, str] | None = None,
+) -> pd.DataFrame:
+    """Read a CSV with header auto-detection + new→internal column rename.
+
+    1. 첫 줄을 헤더로 보고 시도. 첫 줄에 숫자만 있는 게 아니라면 (= 진짜 헤더)
+       헤더로 인식하고 rename_map 에 따라 내부 이름으로 변환.
+    2. 첫 줄이 데이터처럼 보이면 (옛 포맷) fallback_columns 로 위치 기반 매핑.
+    """
     if not path.exists():
-        return pd.DataFrame(columns=columns)
+        return pd.DataFrame(columns=fallback_columns)
+
+    # 1차 시도: 헤더 있다고 가정.
     df = pd.read_csv(
         path,
-        header=None,
+        header=0,
         low_memory=False,
         dtype=str,
         keep_default_na=False,
         na_values=[""],
     )
-    # Pad / truncate to expected number of columns.
-    n_expected = len(columns)
-    if df.shape[1] < n_expected:
-        for i in range(df.shape[1], n_expected):
-            df[i] = pd.NA
-    elif df.shape[1] > n_expected:
-        df = df.iloc[:, :n_expected]
-    df.columns = columns
+    cols = list(df.columns)
+    looks_like_header = any(not _is_numeric_string(c) for c in cols)
+
+    if not looks_like_header:
+        # 옛 포맷 — 헤더 없이 위치 기반.
+        df = pd.read_csv(
+            path,
+            header=None,
+            low_memory=False,
+            dtype=str,
+            keep_default_na=False,
+            na_values=[""],
+        )
+        n_expected = len(fallback_columns)
+        if df.shape[1] < n_expected:
+            for i in range(df.shape[1], n_expected):
+                df[i] = pd.NA
+        elif df.shape[1] > n_expected:
+            df = df.iloc[:, :n_expected]
+        df.columns = fallback_columns
+        return df
+
+    # 새 포맷: rename 적용해 내부 이름으로 통일.
+    if rename_map:
+        df = df.rename(columns=rename_map)
+    # fallback_columns 에 있는 이름 중 빠진 게 있으면 빈 컬럼 추가 (downstream 호환).
+    for col in fallback_columns:
+        if col not in df.columns:
+            df[col] = pd.NA
     return df
+
+
+def _is_numeric_string(s: str) -> bool:
+    """Crude check — used only to distinguish header rows from data rows."""
+    if s is None:
+        return False
+    s = str(s).strip()
+    if not s:
+        return False
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
 
 
 def _to_numeric(df: pd.DataFrame, cols: Iterable[str]) -> pd.DataFrame:
@@ -377,11 +505,11 @@ def load_snapshot(snapshot_date: str, data_root: str | None = None) -> PikitData
     if not snap_dir.exists():
         raise FileNotFoundError(f"Snapshot not found: {snap_dir}")
 
-    blocks = _read_csv(snap_dir / "block.csv", BLOCK_COLS)
+    blocks = _read_csv(snap_dir / "block.csv", BLOCK_COLS, BLOCK_RENAME)
     blocks = _to_numeric(blocks, ["block_id", "drop_rate", "hp", "reward"])
     blocks = _to_datetime(blocks, ["created_at", "updated_at"])
 
-    items = _read_csv(snap_dir / "item.csv", ITEM_COLS)
+    items = _read_csv(snap_dir / "item.csv", ITEM_COLS, ITEM_RENAME)
     items = _to_numeric(
         items,
         ["item_id", "price", "size_mult", "weight_mult", "attack", "duration_ms"],
@@ -389,63 +517,73 @@ def load_snapshot(snapshot_date: str, data_root: str | None = None) -> PikitData
     items = _to_datetime(items, ["created_at", "updated_at"])
     items["category"] = items["name"].apply(_classify_item)
 
-    games = _read_csv(snap_dir / "game.csv", GAME_COLS)
+    games = _read_csv(snap_dir / "game.csv", GAME_COLS, GAME_RENAME)
     games = _to_numeric(games, ["game_id", "param_a", "param_b", "param_c"])
     games = _to_datetime(games, ["created_at", "updated_at"])
 
-    users = _read_csv(snap_dir / "user.csv", USER_COLS)
+    users = _read_csv(snap_dir / "user.csv", USER_COLS, USER_RENAME)
     users = _to_numeric(users, ["user_id", "balance", "demo_balance", "lifetime_credit"])
+    if "bonus" in users.columns:
+        users["bonus"] = pd.to_numeric(users["bonus"], errors="coerce")
     users = _to_datetime(users, ["created_at", "updated_at"])
 
-    user_stats = _read_csv(snap_dir / "user_stats.csv", USER_STATS_COLS)
+    user_stats = _read_csv(snap_dir / "user_stats.csv", USER_STATS_COLS, USER_STATS_RENAME)
     user_stats = _to_numeric(
         user_stats,
         [
             "user_id",
-            "stat_a",
-            "stat_b",
-            "stat_c",
-            "stat_d",
             "total_block_reward",
             "total_item_spend",
-            "stat_e",
+            "total_credit_earned",
+            "total_credit_spent",
+            "total_bonus_earned",
+            "total_bonus_spent",
+            "total_pnl",
         ],
     )
     user_stats = _to_datetime(user_stats, ["created_at", "updated_at"])
 
-    user_block_stats = _read_csv(snap_dir / "user_block_stats.csv", USER_BLOCK_COLS)
+    user_block_stats = _read_csv(
+        snap_dir / "user_block_stats.csv", USER_BLOCK_COLS, USER_BLOCK_RENAME
+    )
     user_block_stats = _to_numeric(user_block_stats, ["user_id", "block_id", "count"])
     user_block_stats = _to_datetime(user_block_stats, ["first_seen", "last_seen"])
 
-    user_item_stats = _read_csv(snap_dir / "user_item_stats.csv", USER_ITEM_COLS)
+    user_item_stats = _read_csv(
+        snap_dir / "user_item_stats.csv", USER_ITEM_COLS, USER_ITEM_RENAME
+    )
     user_item_stats = _to_numeric(user_item_stats, ["user_id", "item_id", "count"])
     user_item_stats = _to_datetime(user_item_stats, ["first_seen", "last_seen"])
 
-    user_attendance = _read_csv(snap_dir / "user_attendance.csv", USER_ATTENDANCE_COLS)
+    user_attendance = _read_csv(
+        snap_dir / "user_attendance.csv", USER_ATTENDANCE_COLS, USER_ATTENDANCE_RENAME
+    )
     user_attendance = _to_numeric(user_attendance, ["user_id", "streak", "total_days"])
     user_attendance = _to_datetime(
         user_attendance, ["first_attendance", "last_attendance", "updated_at"]
     )
 
-    game_user_stats = _read_csv(snap_dir / "game_user_stats.csv", GAME_USER_STATS_COLS)
+    game_user_stats = _read_csv(
+        snap_dir / "game_user_stats.csv", GAME_USER_STATS_COLS, GAME_USER_STATS_RENAME
+    )
     game_user_stats = _to_numeric(
         game_user_stats,
         [
             "game_id",
             "user_id",
-            "stat_a",
-            "stat_b",
-            "stat_c",
-            "stat_d",
             "total_block_reward",
             "total_item_spend",
-            "stat_e",
+            "total_credit_earned",
+            "total_credit_spent",
+            "total_bonus_earned",
+            "total_bonus_spent",
+            "total_pnl",
         ],
     )
     game_user_stats = _to_datetime(game_user_stats, ["created_at", "updated_at"])
 
     game_user_block_stats = _read_csv(
-        snap_dir / "game_user_block_stats.csv", GAME_USER_BLOCK_COLS
+        snap_dir / "game_user_block_stats.csv", GAME_USER_BLOCK_COLS, USER_BLOCK_RENAME
     )
     game_user_block_stats = _to_numeric(
         game_user_block_stats, ["game_id", "user_id", "block_id", "count"]
@@ -455,7 +593,7 @@ def load_snapshot(snapshot_date: str, data_root: str | None = None) -> PikitData
     )
 
     game_user_item_stats = _read_csv(
-        snap_dir / "game_user_item_stats.csv", GAME_USER_ITEM_COLS
+        snap_dir / "game_user_item_stats.csv", GAME_USER_ITEM_COLS, USER_ITEM_RENAME
     )
     game_user_item_stats = _to_numeric(
         game_user_item_stats, ["game_id", "user_id", "item_id", "count"]
@@ -464,7 +602,7 @@ def load_snapshot(snapshot_date: str, data_root: str | None = None) -> PikitData
         game_user_item_stats, ["first_seen", "last_seen"]
     )
 
-    transactions = _read_csv(snap_dir / "user_transaction_log.csv", TX_COLS)
+    transactions = _read_csv(snap_dir / "user_transaction_log.csv", TX_COLS, TX_RENAME)
     transactions = _to_numeric(
         transactions,
         ["tx_id", "user_id", "game_id", "amount", "balance_before", "balance_after", "source_id"],
