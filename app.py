@@ -78,7 +78,7 @@ def _cached_snapshot(date_str: str, data_root: str):
     return load_snapshot(date_str, data_root=data_root)
 
 
-@st.cache_data(show_spinner="시계열 계산 중…", max_entries=20)
+@st.cache_data(show_spinner=False, max_entries=20)
 def _cached_user_timeseries(
     snapshot_date: str,
     data_root: str,
@@ -921,13 +921,29 @@ with tab_hourly:
 
         cc3, cc4 = st.columns([1, 2])
         with cc3:
-            h_freq_label = st.radio(
-                "시간 단위",
-                options=["1분", "5분", "30분", "1시간", "1일"],
-                index=3,
+            h_minutes = st.number_input(
+                "시간 단위 (분)",
+                min_value=1,
+                max_value=1440,
+                value=60,
+                step=1,
+                help=(
+                    "1 ~ 1440 사이 정수. "
+                    "1=1분, 5=5분, 30=30분, 60=1시간, 1440=1일. "
+                    "작을수록 변동 자세히 보이지만 차트 그리기 느려짐."
+                ),
             )
-        h_freq_map = {"1분": "1min", "5분": "5min", "30분": "30min", "1시간": "h", "1일": "D"}
-        h_freq = h_freq_map[h_freq_label]
+        # pandas freq 문자열 — '7min', '15min' 등 임의의 분 단위 OK.
+        h_freq = f"{int(h_minutes)}min"
+        # 차트 제목용 라벨.
+        if h_minutes >= 1440:
+            h_freq_label = f"{int(h_minutes // 1440)}일"
+        elif h_minutes >= 60 and h_minutes % 60 == 0:
+            h_freq_label = f"{int(h_minutes // 60)}시간"
+        elif h_minutes >= 60:
+            h_freq_label = f"{int(h_minutes // 60)}시간 {int(h_minutes % 60)}분"
+        else:
+            h_freq_label = f"{int(h_minutes)}분"
 
         with cc4:
             # 사이드바 기간을 그대로 따르되, 더 좁게 자르고 싶으면 여기서 조정.
@@ -950,43 +966,71 @@ with tab_hourly:
             st.warning("지갑을 최소 1개 이상 선택하세요.")
         else:
             picked_ids = [option_to_id[label] for label in picked]
-            # 캐시된 시계열 호출 — 동일 입력 재호출 시 즉시 반환.
-            ts = _cached_user_timeseries(
-                snapshot_date=latest_choice,
-                data_root=data_root,
-                mode_filter=mode_filter_for_ds,
-                exclude_system=exclude_system,
-                picked_ids=tuple(sorted(picked_ids)),
-                freq=h_freq,
-                h_start_iso=h_start.isoformat() if h_start else "",
-                h_end_iso=h_end.isoformat() if h_end else "",
-            )
+
+            # ---- 진행 표시: 단계별 메시지 ----
+            with st.status("⏱️ 데이터 처리 중…", expanded=True) as status:
+                progress = st.progress(0)
+
+                st.write(f"📥 1/4 — 트랜잭션 슬라이스 ({h_start} ~ {h_end}, 모드={selected_game_mode})")
+                progress.progress(15)
+                _t0 = datetime.now()
+
+                # 캐시된 시계열 호출 — 동일 입력이면 즉시 반환.
+                ts = _cached_user_timeseries(
+                    snapshot_date=latest_choice,
+                    data_root=data_root,
+                    mode_filter=mode_filter_for_ds,
+                    exclude_system=exclude_system,
+                    picked_ids=tuple(sorted(picked_ids)),
+                    freq=h_freq,
+                    h_start_iso=h_start.isoformat() if h_start else "",
+                    h_end_iso=h_end.isoformat() if h_end else "",
+                )
+                _elapsed = (datetime.now() - _t0).total_seconds()
+                st.write(
+                    f"⏱️ 2/4 — 시계열 집계 완료 · {len(ts):,}개 행 · "
+                    f"{h_freq_label} 단위 · {_elapsed:.2f}초 "
+                    f"{'(캐시 적중 ⚡)' if _elapsed < 0.05 else ''}"
+                )
+                progress.progress(50)
+
+                if ts.empty:
+                    st.write("⚠️ 트랜잭션 없음")
+                    progress.progress(100)
+                    status.update(label="데이터 없음", state="error", expanded=True)
+                else:
+                    # ----- 합산 / 개별 모드에 맞춰 데이터 정리 -----
+                    st.write("📊 3/4 — 차트 데이터 가공")
+                    progress.progress(75)
+                    if view_mode == "선택 지갑 합산":
+                        grouped = (
+                            ts.groupby("period")
+                            .agg(
+                                block_reward=("block_reward", "sum"),
+                                item_spend=("item_spend", "sum"),
+                                credit_charged=("credit_charged", "sum"),
+                                tx_count=("tx_count", "sum"),
+                                pnl=("pnl", "sum"),
+                            )
+                            .reset_index()
+                            .sort_values("period")
+                        )
+                        grouped["cum_pnl"] = grouped["pnl"].cumsum()
+                        grouped["label"] = f"합산 {len(picked_ids)}명"
+                        series = grouped
+                    else:
+                        series = ts.copy()
+                        series["label"] = series.apply(
+                            lambda r: f"#{int(r['user_id'])} {r['username'] or ''}".strip(), axis=1
+                        )
+
+                    st.write(f"🎨 4/4 — 차트 렌더 ({len(series):,}개 데이터 포인트)")
+                    progress.progress(100)
+                    status.update(label="✓ 완료", state="complete", expanded=False)
 
             if ts.empty:
-                st.info("선택한 조건에 트랜잭션이 없습니다.")
+                pass  # 위에서 이미 표시
             else:
-                # ----- 합산 / 개별 모드에 맞춰 데이터 정리 -----
-                if view_mode == "선택 지갑 합산":
-                    grouped = (
-                        ts.groupby("period")
-                        .agg(
-                            block_reward=("block_reward", "sum"),
-                            item_spend=("item_spend", "sum"),
-                            credit_charged=("credit_charged", "sum"),
-                            tx_count=("tx_count", "sum"),
-                            pnl=("pnl", "sum"),
-                        )
-                        .reset_index()
-                        .sort_values("period")
-                    )
-                    grouped["cum_pnl"] = grouped["pnl"].cumsum()
-                    grouped["label"] = f"합산 {len(picked_ids)}명"
-                    series = grouped
-                else:
-                    series = ts.copy()
-                    series["label"] = series.apply(
-                        lambda r: f"#{int(r['user_id'])} {r['username'] or ''}".strip(), axis=1
-                    )
 
                 # ----- KPI 카드 -----
                 total_reward = float(series["block_reward"].sum())
