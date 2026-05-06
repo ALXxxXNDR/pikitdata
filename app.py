@@ -193,6 +193,21 @@ def _fmt_int(v) -> str:
     return f"{v:,.0f}"
 
 
+def _loading_box_html(title: str, subtitle: str = "") -> str:
+    """탭 진입 즉시 보이는 큰 로딩 박스의 HTML — 일관된 룩을 한 곳에서 관리."""
+    sub = (
+        f'<div style="font-size:13px;color:#aaa;margin-top:6px;">{subtitle}</div>'
+        if subtitle else ""
+    )
+    return f"""
+        <div style="padding:24px;margin:8px 0 16px;background:linear-gradient(90deg,#1a1f2e,#222840);
+                    border-left:4px solid #f5b800;border-radius:6px;">
+            <div style="font-size:18px;color:#f5b800;font-weight:600;">⏳ {title}</div>
+            {sub}
+        </div>
+    """
+
+
 def _safe_metric(label: str, value, delta=None, help_text: str | None = None):
     if isinstance(value, (int, float)) and not pd.isna(value):
         formatted = f"{value:,.0f}" if abs(value) >= 100 else f"{value:,.2f}"
@@ -451,28 +466,55 @@ tab_blocks = _tabs[6]
 tab_data = _tabs[7] if not PUBLIC_MODE else None
 
 
-# -------- 유저 탭 --------
+# ----------------------------------------------------------------------------
+# 모든 무거운 탭의 로딩 박스 + 진행률 슬롯을 가장 먼저 한꺼번에 그려둠.
+# Streamlit 은 이 블록까지 거의 즉시 (밀리초) 실행하기 때문에, 다른 탭의 무거운
+# 계산이 시작되기 전에 모든 탭에 로딩 박스가 노출됨. → 어느 탭을 클릭하더라도
+# 빈 검은 박스가 보이는 일이 사라짐.
+# ----------------------------------------------------------------------------
 with tab_users:
-    # 탭 진입 즉시 큰 로딩 박스 — compute_user_pnl 이 무거워 첫 진입 5~15초 걸림.
-    _users_loading_slot = st.empty()
-    _users_loading_slot.markdown(
-        """
-        <div style="padding:24px;margin:8px 0 16px;background:linear-gradient(90deg,#1a1f2e,#222840);
-                    border-left:4px solid #f5b800;border-radius:6px;">
-            <div style="font-size:18px;color:#f5b800;font-weight:600;">
-                ⏳ 유저별 PNL 계산 중…
-            </div>
-            <div style="font-size:13px;color:#aaa;margin-top:6px;">
-                전체 유저 트랜잭션 집계 중. 캐시 적중 시 즉시 반환.
-            </div>
-        </div>
-        """,
+    _users_box = st.empty()
+    _users_progress = st.empty()
+    _users_box.markdown(
+        _loading_box_html("유저별 PNL 계산 중…", "전체 트랜잭션 집계. 캐시 적중 시 즉시 반환."),
         unsafe_allow_html=True,
     )
+    _users_progress.progress(5, text="5% — 대기 중")
+
+with tab_summon:
+    _summon_box = st.empty()
+    _summon_progress = st.empty()
+    _summon_box.markdown(
+        _loading_box_html(
+            "곡괭이 소환 ROI 계산 중…",
+            "각 소환 행마다 활성 구간 안의 블록 보상을 합산하는 무거운 단계.",
+        ),
+        unsafe_allow_html=True,
+    )
+    _summon_progress.progress(5, text="5% — 대기 중")
+
+with tab_hourly:
+    _hourly_box = st.empty()
+    _hourly_progress = st.empty()
+    _hourly_box.markdown(
+        _loading_box_html(
+            "시간대별 PNL 준비 중…",
+            "유저 목록 → 컨트롤 → 차트 (캐시 적중 시 즉시).",
+        ),
+        unsafe_allow_html=True,
+    )
+    _hourly_progress.progress(5, text="5% — 대기 중")
+
+
+# -------- 유저 탭 --------
+with tab_users:
+    _users_progress.progress(40, text="40% — 유저 PNL 집계 중…")
+    pnl = compute_user_pnl(ds, exclude_system_users=exclude_system)
+    _users_progress.progress(85, text="85% — 차트/표 렌더링 중…")
+    # 무거운 계산 완료 — 로딩 박스 + 진행 바 제거
+    _users_box.empty()
+    _users_progress.empty()
     st.subheader("유저별 PNL")
-    with st.spinner("👤 유저별 PNL 집계…"):
-        pnl = compute_user_pnl(ds, exclude_system_users=exclude_system)
-    _users_loading_slot.empty()
 
     # 방어적 필터: quest 는 항상, system 은 토글에 따라 PNL 표에서 추가 보장 제거.
     blocked_ids = list(ds.quest_user_ids)
@@ -733,32 +775,17 @@ with tab_winning:
 
 # -------- 🎰 곡괭이 소환 ROI 탭 --------
 with tab_summon:
-    # 탭 진입 즉시 큰 로딩 박스 — compute_per_summon_returns 가 가장 무거운 루프.
-    _summon_loading_slot = st.empty()
-    _summon_loading_slot.markdown(
-        """
-        <div style="padding:24px;margin:8px 0 16px;background:linear-gradient(90deg,#1a1f2e,#222840);
-                    border-left:4px solid #f5b800;border-radius:6px;">
-            <div style="font-size:18px;color:#f5b800;font-weight:600;">
-                ⏳ 곡괭이 소환 ROI 계산 중…
-            </div>
-            <div style="font-size:13px;color:#aaa;margin-top:6px;">
-                각 소환 행마다 활성 구간 안의 블록 보상을 합산하는 무거운 단계입니다.
-                첫 호출 후엔 캐시 적중으로 즉시 반환.
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    _summon_progress.progress(40, text="40% — 소환별 net PNL 계산 중…")
+    psr = compute_per_summon_returns(ds, exclude_system_users=exclude_system)
+    _summon_progress.progress(85, text="85% — 차트/표 렌더링 중…")
+    # 무거운 계산 완료 — pre-emit 슬롯 제거.
+    _summon_box.empty()
+    _summon_progress.empty()
     st.subheader("곡괭이 1회 소환 = 1 row")
     st.write(
         "각 곡괭이 구매(소환)마다 그 곡괭이가 활성인 동안 (최대 duration_ms 까지, 다음 구매 전까지) "
         "유저가 받은 **블록 보상 합계**를 계산합니다. 이게 곡괭이 한 번 사면 평균적으로 얼마 벌지를 보여주는 진짜 ROI 분포입니다."
     )
-
-    with st.spinner("🎰 소환별 net PNL 계산 중…"):
-        psr = compute_per_summon_returns(ds, exclude_system_users=exclude_system)
-    _summon_loading_slot.empty()
     if psr.empty:
         st.info("이 조건에 곡괭이 구매 트랜잭션이 없습니다.")
     else:
@@ -1070,26 +1097,11 @@ with tab_summon:
 
 # -------- ⏱️ 시간대별 PNL 탭 (재작성) --------
 with tab_hourly:
-    # 탭 진입 즉시 보이는 큰 로딩 박스 — 컨트롤이 렌더되기 전 공백을 채움.
-    top_loading_slot = st.empty()
-    top_loading_slot.markdown(
-        """
-        <div style="padding:24px;margin:8px 0 16px;background:linear-gradient(90deg,#1a1f2e,#222840);
-                    border-left:4px solid #f5b800;border-radius:6px;">
-            <div style="font-size:18px;color:#f5b800;font-weight:600;">
-                ⏳ 시간대별 PNL 준비 중…
-            </div>
-            <div style="font-size:13px;color:#aaa;margin-top:6px;">
-                유저 목록 로딩 → 컨트롤 렌더 → 차트 계산 (캐시 적중 시 즉시)
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    # 진행률 슬롯 — top_loading_slot 바로 아래에 빈 progress bar 자리.
-    progress_slot = st.empty()
-    progress_bar = progress_slot.progress(5, text="📥 1단계: 유저 목록 로딩")
+    # pre-emit 슬롯 (탭 선언 직후 이미 그려둔 박스/진행바) 를 사용.
+    # alias 로 기존 변수명 유지하여 아래 로직은 그대로 동작.
+    top_loading_slot = _hourly_box
+    progress_slot = _hourly_progress
+    progress_bar = _hourly_progress.progress(15, text="15% — 유저 목록 로딩")
 
     st.subheader("시간대별 PNL — 지갑 단위 + 시·분 단위 분석")
     st.write(
@@ -1104,7 +1116,7 @@ with tab_hourly:
         latest_choice, data_root, mode_filter_for_ds, exclude_system,
         _t_min.isoformat(), _t_max.isoformat(),
     )
-    progress_bar.progress(35, text="✓ 유저 목록 준비 완료 → 컨트롤 렌더")
+    progress_bar.progress(35, text="35% — 유저 목록 준비 완료, 컨트롤 렌더링")
 
     if pnl_for_picker.empty:
         top_loading_slot.empty()
@@ -1166,7 +1178,7 @@ with tab_hourly:
 
         # 컨트롤 보이기 직전 — 큰 로딩 박스는 치우고 progress 만 살짝 띄움.
         top_loading_slot.empty()
-        progress_bar.progress(60, text="✓ 컨트롤 준비 완료 → 옵션 선택 대기")
+        progress_bar.progress(60, text="60% — 컨트롤 준비 완료, 옵션 선택 대기")
 
         cc1, cc2 = st.columns([3, 1])
         with cc1:
@@ -1254,7 +1266,7 @@ with tab_hourly:
             st.warning("지갑을 최소 1개 이상 선택하세요.")
         else:
             # 데이터 계산 단계로 진입 — 위쪽 progress bar 마무리.
-            progress_bar.progress(80, text="🚀 데이터 계산 시작 (아래 status 박스 참고)")
+            progress_bar.progress(80, text="80% — 데이터 계산 시작 (아래 status 박스 참고)")
             picked_ids = [option_to_id[label] for label in picked]
             results_placeholder = st.container()
 
