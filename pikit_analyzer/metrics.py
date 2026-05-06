@@ -57,14 +57,14 @@ def compute_user_pnl(ds: PikitDataset, exclude_system_users: bool = True) -> pd.
     tx["abs_amount"] = tx["amount"].abs()
 
     grouped = (
-        tx.groupby(["user_id", "tx_type"])["abs_amount"].sum().unstack(fill_value=0)
+        tx.groupby(["user_id", "tx_type"], observed=True)["abs_amount"].sum().unstack(fill_value=0)
     )
     for col in ("DEMO_CREDIT_CHARGE", "BLOCK_REWARD", "ITEM_PURCHASE"):
         if col not in grouped.columns:
             grouped[col] = 0
 
     counts = (
-        tx.groupby(["user_id", "tx_type"])["tx_id"].count().unstack(fill_value=0)
+        tx.groupby(["user_id", "tx_type"], observed=True)["tx_id"].count().unstack(fill_value=0)
     )
     blocks_mined = counts.get("BLOCK_REWARD", pd.Series(0, index=grouped.index))
     items_purchased = counts.get("ITEM_PURCHASE", pd.Series(0, index=grouped.index))
@@ -315,7 +315,7 @@ def compute_session_metrics(ds: PikitDataset, exclude_system_users: bool = True)
     tx = tx.copy()
     tx["abs_amount"] = tx["amount"].abs()
     pivot = (
-        tx.groupby(["user_id", "game_id", "tx_type"])["abs_amount"]
+        tx.groupby(["user_id", "game_id", "tx_type"], observed=True)["abs_amount"]
         .sum()
         .unstack(fill_value=0)
     )
@@ -396,7 +396,7 @@ def compute_user_timeseries(
     tx["period"] = tx["created_at"].dt.floor(freq)
 
     pivot = (
-        tx.groupby(["period", "user_id", "tx_type"])["abs_amount"]
+        tx.groupby(["period", "user_id", "tx_type"], observed=True)["abs_amount"]
         .sum()
         .unstack("tx_type", fill_value=0)
     )

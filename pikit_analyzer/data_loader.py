@@ -533,7 +533,7 @@ def list_snapshot_dates(data_root: Path = DEFAULT_DATA_ROOT) -> list[str]:
     return sorted(dates)
 
 
-@lru_cache(maxsize=8)
+@lru_cache(maxsize=2)  # 동일 스냅샷 인스턴스 누적 방지 (Cloud 1GB 한도)
 def load_snapshot(snapshot_date: str, data_root: str | None = None) -> PikitDataset:
     """Load a single daily snapshot identified by its folder name."""
     root = Path(data_root) if data_root else DEFAULT_DATA_ROOT
@@ -641,21 +641,30 @@ def load_snapshot(snapshot_date: str, data_root: str | None = None) -> PikitData
     transactions = _read_csv(snap_dir / "user_transaction_log.csv", TX_COLS, TX_RENAME)
     transactions = _to_numeric(
         transactions,
-        ["tx_id", "user_id", "game_id", "amount", "balance_before", "balance_after", "source_id"],
+        ["tx_id", "user_id", "game_id", "amount", "source_id"],
     )
     transactions = _to_datetime(transactions, ["created_at"])
-    # 메모리 절감 — Streamlit Cloud 1GB 한도 대응. 60만+ 행에서 가장 큰 효과:
-    # int64 → int32 다운캐스트 (사용자/게임/소스 ID는 작은 정수).
-    for col, dtype in (
-        ("user_id", "Int32"),
-        ("game_id", "Int32"),
-        ("source_id", "Int32"),
-    ):
+
+    # ---- 메모리 절감 (Streamlit Cloud 1GB 한도 대응) ----
+    # 1) 분석에 사용 안 하는 컬럼 즉시 drop. 60만+ 행에서 ~50MB+ 절감.
+    for unused_col in ("balance_before", "balance_after", "message"):
+        if unused_col in transactions.columns:
+            del transactions[unused_col]
+    # 2) ID 들은 Int32 (작은 정수).
+    for col in ("user_id", "game_id", "source_id"):
         if col in transactions.columns:
             try:
-                transactions[col] = transactions[col].astype(dtype)
+                transactions[col] = transactions[col].astype("Int32")
             except (TypeError, ValueError):
                 pass
+    # 3) 반복 문자열 → category (tx_type/direction/source_type 은 카디널리티 < 10).
+    for col in ("tx_type", "direction", "source_type"):
+        if col in transactions.columns:
+            try:
+                transactions[col] = transactions[col].astype("category")
+            except (TypeError, ValueError):
+                pass
+
     if "created_at" in transactions.columns:
         transactions["snapshot_day"] = transactions["created_at"].dt.date
 
@@ -677,7 +686,9 @@ def load_snapshot(snapshot_date: str, data_root: str | None = None) -> PikitData
                 mode_map[int(gid)] = "TEST"
             else:
                 mode_map[int(gid)] = "UNKNOWN"
-        transactions["game_mode"] = transactions["game_id"].map(mode_map).fillna("UNKNOWN")
+        transactions["game_mode"] = (
+            transactions["game_id"].map(mode_map).fillna("UNKNOWN").astype("category")
+        )
     else:
         transactions["game_mode"] = "UNKNOWN"
 

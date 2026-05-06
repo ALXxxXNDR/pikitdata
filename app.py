@@ -92,7 +92,7 @@ def _cached_snapshot(date_str: str, data_root: str):
         return load_snapshot(date_str, data_root=data_root)
 
 
-@st.cache_data(show_spinner="⏱️ 시계열 집계 중…", max_entries=20)
+@st.cache_data(show_spinner="⏱️ 시계열 집계 중…", max_entries=8, ttl=3600)
 def _cached_user_timeseries(
     snapshot_date: str,
     data_root: str,
@@ -121,7 +121,7 @@ def _cached_user_timeseries(
     )
 
 
-@st.cache_data(show_spinner="👤 유저 PNL 계산 중…", max_entries=10)
+@st.cache_data(show_spinner="👤 유저 PNL 계산 중…", max_entries=5, ttl=3600)
 def _cached_user_pnl(snapshot_date: str, data_root: str, mode_filter: str | None,
                     exclude_system: bool, start_iso: str, end_iso: str):
     ds = load_snapshot(snapshot_date, data_root=data_root)
@@ -134,7 +134,7 @@ def _cached_user_pnl(snapshot_date: str, data_root: str, mode_filter: str | None
 
 # 페이지 헤더의 KPI — 사이드바 위젯 바뀔 때마다 가장 자주 재계산되던 무거운
 # 부분. 캐싱 + spinner 로 묶어서 사용자에게 진행 표시.
-@st.cache_data(show_spinner="📊 헤더 KPI 계산 중…", max_entries=20)
+@st.cache_data(show_spinner="📊 헤더 KPI 계산 중…", max_entries=8, ttl=3600)
 def _cached_header_kpi(snapshot_date: str, data_root: str, mode_filter: str | None,
                        exclude_system: bool, start_iso: str, end_iso: str):
     ds = load_snapshot(snapshot_date, data_root=data_root)
