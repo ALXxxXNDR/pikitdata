@@ -31,10 +31,7 @@ except Exception:
 PUBLIC_MODE = os.environ.get("PIKIT_PUBLIC", "").lower() in ("1", "true", "yes", "on")
 
 from pikit_analyzer import (
-    BalanceTweak,
     DEFAULT_DATA_ROOT,
-    balance_config_json,
-    blocks_csv_with_recommendations,
     compute_block_economy,
     compute_item_economy,
     compute_kpi_summary,
@@ -47,19 +44,10 @@ from pikit_analyzer import (
     compute_winning_moments,
     compute_per_summon_returns,
     summarize_per_summon,
-    classify_outcome,
-    compute_summon_outcomes,
-    summarize_outcome_tiers,
-    compute_engagement_pulse,
-    compute_per_minute_grid,
-    OUTCOME_TIERS,
-    items_csv_with_recommendations,
     list_snapshot_dates,
     load_snapshot,
     recommend_block_changes,
     recommend_item_changes,
-    simulate_balance,
-    simulator_overrides_csv,
 )
 
 st.set_page_config(
@@ -91,9 +79,17 @@ BOT_USER_IDS: dict[int, str] = {
 }
 
 
-@st.cache_data(show_spinner="📥 스냅샷 로딩 중…")
 def _cached_snapshot(date_str: str, data_root: str):
-    return load_snapshot(date_str, data_root=data_root)
+    """Snapshot 캐싱 — `load_snapshot` 내부에 functools.lru_cache 가 이미 적용되어
+    있어서 같은 인자에 대해 즉시 반환됩니다.
+
+    Note: 예전엔 `@st.cache_data` 를 썼지만 Python 3.14 + Streamlit 의 cache
+    deserializer 가 `@dataclass` 의 KW_ONLY 검사 단계에서 `'NoneType' object has
+    no attribute '__dict__'` 로 죽는 회귀가 있어 (Streamlit Cloud Python 3.14)
+    streamlit 캐시 레이어를 떼어냈습니다.
+    """
+    with st.spinner("📥 스냅샷 로딩 중…"):
+        return load_snapshot(date_str, data_root=data_root)
 
 
 @st.cache_data(show_spinner="⏱️ 시계열 집계 중…", max_entries=20)
