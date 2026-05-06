@@ -73,12 +73,30 @@ st.set_page_config(
 # 헬퍼
 # ---------------------------------------------------------------------------
 
-@st.cache_data(show_spinner=False)
+# 운영자 봇 지갑 매핑 — 시간대별 PNL 탭에서 기본 선택값으로 사용.
+# user_id → 봇 라벨. 매칭은 사용자가 알려준 prefix 를 실제 데이터에 매핑한 결과.
+BOT_USER_IDS: dict[int, str] = {
+    30: "bot-01",   # 0xc76Acc31
+    31: "bot-02",   # 0x987E2d36
+    47: "bot-03",   # 0x0C8ea4C1
+    60: "bot-04",   # 0x221281c6
+    61: "bot-05",   # 0x7Fc089E3
+    62: "bot-06",   # 0x09c1fd34
+    64: "bot-07",   # 0x17964258
+    63: "bot-08",   # 0xC2666Fe9
+    65: "bot-09",   # 0xeac8829E
+    66: "bot-10",   # 0x19A94037
+    67: "bot-11",   # 0x4D75f9Dd
+    56: "bot-12",   # 0x08f37ee6
+}
+
+
+@st.cache_data(show_spinner="📥 스냅샷 로딩 중…")
 def _cached_snapshot(date_str: str, data_root: str):
     return load_snapshot(date_str, data_root=data_root)
 
 
-@st.cache_data(show_spinner=False, max_entries=20)
+@st.cache_data(show_spinner="⏱️ 시계열 집계 중…", max_entries=20)
 def _cached_user_timeseries(
     snapshot_date: str,
     data_root: str,
@@ -107,7 +125,7 @@ def _cached_user_timeseries(
     )
 
 
-@st.cache_data(show_spinner=False, max_entries=10)
+@st.cache_data(show_spinner="👤 유저 PNL 계산 중…", max_entries=10)
 def _cached_user_pnl(snapshot_date: str, data_root: str, mode_filter: str | None,
                     exclude_system: bool, start_iso: str, end_iso: str):
     ds = load_snapshot(snapshot_date, data_root=data_root)
@@ -967,27 +985,43 @@ with tab_hourly:
     if pnl_for_picker.empty:
         st.info("선택된 모드/기간에 트랜잭션이 있는 유저가 없습니다.")
     else:
-        # 활동량(트랜잭션 수) 큰 순으로 정렬해서 라벨 만들기.
-        users_sorted = pnl_for_picker.sort_values("tx_count", ascending=False)
+        # 봇은 항상 위에 (활동량 무관), 그 다음 일반 유저는 활동량 큰 순.
+        is_bot = pnl_for_picker["user_id"].isin(BOT_USER_IDS.keys())
+        bots_first = pnl_for_picker[is_bot].copy()
+        bots_first["bot_order"] = bots_first["user_id"].map(
+            {uid: int(label.split("-")[1]) for uid, label in BOT_USER_IDS.items()}
+        )
+        bots_first = bots_first.sort_values("bot_order")
+        others = pnl_for_picker[~is_bot].sort_values("tx_count", ascending=False)
+        users_sorted = pd.concat([bots_first, others], ignore_index=True)
+
         option_to_id: dict[str, int] = {}
         options: list[str] = []
+        bot_options: list[str] = []
         for _, row in users_sorted.iterrows():
             uid = int(row["user_id"])
             uname = row.get("username") or "(no name)"
             wallet = row.get("wallet_address") or ""
             wallet_short = (wallet[:10] + "…" + wallet[-4:]) if isinstance(wallet, str) and len(wallet) > 16 else wallet
-            label = f"{wallet_short}  ·  {uname}  ·  #{uid}  ·  PNL {row['pnl']:,.0f}"
+            bot_label = BOT_USER_IDS.get(uid)
+            if bot_label:
+                label = f"🤖 {bot_label}  ·  {wallet_short}  ·  PNL {row['pnl']:,.0f}"
+                bot_options.append(label)
+            else:
+                label = f"{wallet_short}  ·  {uname}  ·  #{uid}  ·  PNL {row['pnl']:,.0f}"
             options.append(label)
             option_to_id[label] = uid
 
         # ----- 컨트롤: 지갑 / 시간 단위 / 기간 / 표시 방식 -----
         cc1, cc2 = st.columns([3, 1])
         with cc1:
+            # 봇 12개를 기본 선택. 이게 user 의 실제 운영 봇들.
+            default_pick = bot_options if bot_options else options[: min(3, len(options))]
             picked = st.multiselect(
-                "지갑 선택 (검색: 주소 / 닉네임 / user_id)",
+                "지갑 선택 (검색: 주소 / 닉네임 / user_id) — 🤖 표시는 운영 봇",
                 options=options,
-                default=options[: min(3, len(options))],
-                help="여러 개 선택 가능. 활동량 많은 순으로 정렬됨.",
+                default=default_pick,
+                help="기본은 운영 봇 12개. 일반 유저는 그 아래 활동량 순으로 정렬됨.",
             )
         with cc2:
             view_mode = st.radio(
@@ -1101,9 +1135,13 @@ with tab_hourly:
                         series = grouped
                     else:
                         series = ts.copy()
-                        series["label"] = series.apply(
-                            lambda r: f"#{int(r['user_id'])} {r['username'] or ''}".strip(), axis=1
-                        )
+                        # 봇이면 'bot-XX' 라벨로, 아니면 user_id + username 으로.
+                        def _make_label(r):
+                            uid = int(r["user_id"])
+                            if uid in BOT_USER_IDS:
+                                return f"🤖 {BOT_USER_IDS[uid]}"
+                            return f"#{uid} {r['username'] or ''}".strip()
+                        series["label"] = series.apply(_make_label, axis=1)
                     progress.progress(40)
 
                     # ----- 결과 그리기 (status 안에서 진행 보여주면서, results_placeholder 에 출력) -----
