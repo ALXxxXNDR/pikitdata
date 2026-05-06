@@ -47,6 +47,12 @@ from pikit_analyzer import (
     compute_winning_moments,
     compute_per_summon_returns,
     summarize_per_summon,
+    classify_outcome,
+    compute_summon_outcomes,
+    summarize_outcome_tiers,
+    compute_engagement_pulse,
+    compute_per_minute_grid,
+    OUTCOME_TIERS,
     items_csv_with_recommendations,
     list_snapshot_dates,
     load_snapshot,
@@ -302,6 +308,7 @@ tab_labels = [
     "👤 유저",
     "🎯 승리 경험",
     "🎰 곡괭이 소환 ROI",
+    "🎲 카지노 분석",
     "⏱️ 시간대별 PNL",
     "🔍 유저 상세 / 그룹 분석",
     "⛏️ 곡괭이 / TNT",
@@ -315,18 +322,19 @@ _tabs = st.tabs(tab_labels)
 tab_users = _tabs[0]
 tab_winning = _tabs[1]
 tab_summon = _tabs[2]
-tab_hourly = _tabs[3]
-tab_user_detail = _tabs[4]
-tab_items = _tabs[5]
-tab_blocks = _tabs[6]
+tab_casino = _tabs[3]
+tab_hourly = _tabs[4]
+tab_user_detail = _tabs[5]
+tab_items = _tabs[6]
+tab_blocks = _tabs[7]
 if PUBLIC_MODE:
     tab_data = None
-    tab_sim = _tabs[7]
-    tab_export = _tabs[8]
-else:
-    tab_data = _tabs[7]
     tab_sim = _tabs[8]
     tab_export = _tabs[9]
+else:
+    tab_data = _tabs[8]
+    tab_sim = _tabs[9]
+    tab_export = _tabs[10]
 
 
 # -------- 유저 탭 --------
@@ -712,6 +720,325 @@ with tab_summon:
                 "유저가 곡괭이 한 번 사면 4~5번 중 1번 정도만 이긴다는 의미. "
                 "이 비율이 너무 낮으면 유저가 '내가 운이 나쁘구나'를 넘어 '이 게임은 못 이기겠다'로 떠납니다."
             )
+
+
+# -------- 🎲 카지노 분석 탭 --------
+with tab_casino:
+    st.subheader("카지노식 흥미도 분석")
+    st.write(
+        "장기적으로는 시스템(하우스) 이 이깁니다. 하지만 **유저 입장에서 충분히 자주 흥분하는 순간**이 있어야 "
+        "다시 옵니다. 각 곡괭이 소환을 카지노 베팅처럼 5단계로 분류하고, 흥분 빈도 / 회복 가능성을 측정합니다."
+    )
+
+    # 등급 기준 안내
+    with st.expander("등급 기준 (가격 대비 net_pnl 비율 = ROI)", expanded=False):
+        st.markdown(
+            """
+            | 등급 | ROI 범위 | 의미 |
+            |---|---|---|
+            | 🔴 BUST | < -75% | 거의 빈손 (가격의 25% 미만 회수) |
+            | 🟠 LOSS | -75% ~ 0% | 손해 |
+            | 🟡 BREAK_EVEN | 0% ~ +50% | 본전 ~ 살짝 흑자 |
+            | 🟢 WIN | +50% ~ +200% | 1.5x ~ 3x 흑자 (도파민 트리거) |
+            | 🌟 JACKPOT | ≥ +200% | 3x 이상 (큰 흥분) |
+            """
+        )
+
+    psr = compute_summon_outcomes(ds, exclude_system_users=exclude_system)
+    if psr.empty:
+        st.info("이 조건에 곡괭이 소환 데이터가 없습니다.")
+    else:
+        # ----- 1) Outcome 등급 분포 -----
+        st.markdown("### 1️⃣ 곡괭이별 Outcome 등급 분포")
+        cat_filter = st.radio("카테고리", ["PICKAXE", "TNT", "전체"], horizontal=True, index=0,
+                              key="casino_cat")
+        view_psr = psr if cat_filter == "전체" else psr[psr["category"] == cat_filter]
+        ot_summary = summarize_outcome_tiers(view_psr)
+        if not ot_summary.empty:
+            tier_color = {
+                "pct_bust": "#c44",
+                "pct_loss": "#e80",
+                "pct_break_even": "#dc0",
+                "pct_win": "#2c2",
+                "pct_jackpot": "#08c",
+            }
+            tier_label = {
+                "pct_bust": "🔴 BUST",
+                "pct_loss": "🟠 LOSS",
+                "pct_break_even": "🟡 BREAK_EVEN",
+                "pct_win": "🟢 WIN",
+                "pct_jackpot": "🌟 JACKPOT",
+            }
+            stacked = ot_summary.melt(
+                id_vars=["item_name", "mode", "price"],
+                value_vars=["pct_bust", "pct_loss", "pct_break_even", "pct_win", "pct_jackpot"],
+                var_name="tier",
+                value_name="pct",
+            )
+            stacked["tier_label"] = stacked["tier"].map(tier_label)
+            fig = px.bar(
+                stacked,
+                x="item_name",
+                y="pct",
+                color="tier_label",
+                color_discrete_map={tier_label[k]: v for k, v in tier_color.items()},
+                title="곡괭이별 Outcome 등급 분포 (모두 합 = 1.0)",
+                labels={"item_name": "곡괭이", "pct": "비율", "tier_label": "등급"},
+                category_orders={"tier_label": ["🔴 BUST", "🟠 LOSS", "🟡 BREAK_EVEN", "🟢 WIN", "🌟 JACKPOT"]},
+            )
+            st.plotly_chart(fig)
+
+            st.markdown("**숫자 표** — hit_rate (어떤 보상이라도 받음 비율) + 등급별 비율")
+            st.dataframe(
+                ot_summary,
+                width="stretch",
+                column_config={
+                    "item_id": "ID",
+                    "item_name": "이름",
+                    "mode": "모드",
+                    "category": "카테고리",
+                    "price": st.column_config.NumberColumn("가격", format="%d"),
+                    "attack": st.column_config.NumberColumn("공격력", format="%.2f"),
+                    "duration_ms": st.column_config.NumberColumn("지속(ms)", format="%d"),
+                    "summons": st.column_config.NumberColumn("소환 수", format="%d"),
+                    "hit_rate": st.column_config.NumberColumn("hit rate", format="%.1%"),
+                    "pct_bust": st.column_config.NumberColumn("🔴 BUST", format="%.1%"),
+                    "pct_loss": st.column_config.NumberColumn("🟠 LOSS", format="%.1%"),
+                    "pct_break_even": st.column_config.NumberColumn("🟡 BREAK_EVEN", format="%.1%"),
+                    "pct_win": st.column_config.NumberColumn("🟢 WIN", format="%.1%"),
+                    "pct_jackpot": st.column_config.NumberColumn("🌟 JACKPOT", format="%.1%"),
+                    "pct_win_or_better": st.column_config.NumberColumn("WIN+", format="%.1%"),
+                    "expected_roi": st.column_config.NumberColumn("expected ROI", format="%.2f"),
+                },
+            )
+            st.download_button(
+                "Outcome 등급 분포 CSV",
+                data=ot_summary.to_csv(index=False).encode("utf-8-sig"),
+                file_name=_ts_filename("outcome_tiers", "csv"),
+                mime="text/csv",
+            )
+
+        st.divider()
+
+        # ----- 2) 시간 버킷별 PNL 히트맵 -----
+        st.markdown("### 2️⃣ 시간 버킷별 PNL 히트맵 — 누가 언제 흥분했나")
+        cc1, cc2, cc3 = st.columns([1, 1, 2])
+        with cc1:
+            bucket_label = st.radio(
+                "버킷 크기",
+                options=["1분", "30초", "5분", "10분"],
+                index=0,
+                help="작을수록 카지노식 변동성이 잘 보임. 큰 데이터는 5분/10분 추천",
+            )
+        with cc2:
+            top_user_n = st.slider("표시 유저 수 (활동량 상위)", 5, 30, 15, 1)
+        with cc3:
+            highlight_jackpot = st.toggle("JACKPOT 셀 강조", value=True,
+                                          help="해당 버킷에 JACKPOT 결과가 있었으면 별표 표시")
+
+        bucket_map = {"30초": "30s", "1분": "1min", "5분": "5min", "10분": "10min"}
+        freq = bucket_map[bucket_label]
+
+        # 활동량 상위 유저 선정
+        wm_top = (
+            psr.groupby("user_id")
+            .size()
+            .sort_values(ascending=False)
+            .head(top_user_n)
+            .index.tolist()
+        )
+        grid = compute_per_minute_grid(
+            ds, user_ids=wm_top, freq=freq, exclude_system_users=exclude_system
+        )
+        if grid.empty:
+            st.info("선택한 조건에 데이터가 없습니다.")
+        else:
+            grid["label"] = grid.apply(
+                lambda r: f"#{int(r['user_id'])} {r['username'] or ''}".strip(), axis=1
+            )
+            pivot = grid.pivot_table(
+                index="label", columns="period", values="delta_pnl", aggfunc="sum"
+            ).fillna(0)
+            # 활동량 큰 순으로 위에서 아래로 정렬
+            pivot = pivot.loc[
+                pivot.abs().sum(axis=1).sort_values(ascending=False).index
+            ]
+            fig_heat = px.imshow(
+                pivot,
+                aspect="auto",
+                title=f"유저 × {bucket_label} delta_pnl (빨강=흑자, 파랑=적자)",
+                labels={"x": "기간", "y": "유저", "color": "delta_pnl"},
+                color_continuous_scale="RdBu_r",
+                color_continuous_midpoint=0,
+            )
+            st.plotly_chart(fig_heat)
+
+            if highlight_jackpot:
+                jp_pivot = grid.pivot_table(
+                    index="label", columns="period", values="any_jackpot", aggfunc="any"
+                ).fillna(False).astype(int)
+                if jp_pivot.values.sum() > 0:
+                    fig_jp = px.imshow(
+                        jp_pivot,
+                        aspect="auto",
+                        title=f"유저 × {bucket_label} JACKPOT 발생 여부 (1 = 있음)",
+                        labels={"x": "기간", "y": "유저", "color": "JACKPOT"},
+                        color_continuous_scale=[[0, "#222"], [1, "#fb0"]],
+                    )
+                    st.plotly_chart(fig_jp)
+
+            with st.expander(f"버킷 그리드 원본 ({len(grid):,} 행)"):
+                st.dataframe(grid, width="stretch")
+                st.download_button(
+                    "버킷 그리드 CSV",
+                    data=grid.to_csv(index=False).encode("utf-8-sig"),
+                    file_name=_ts_filename(f"grid_{freq}", "csv"),
+                    mime="text/csv",
+                )
+
+        st.divider()
+
+        # ----- 3) Engagement pulse (유저별 흥미도 패턴) -----
+        st.markdown("### 3️⃣ 유저별 흥미도 패턴 (Engagement Pulse)")
+        cc4, cc5 = st.columns(2)
+        with cc4:
+            drought_th = st.slider("Drought 임계 (연속 실패 N회)", 3, 20, 5, 1)
+        with cc5:
+            comeback_window = st.slider("Comeback 윈도우 (다음 N번 안에)", 1, 10, 3, 1)
+
+        ep = compute_engagement_pulse(
+            ds,
+            drought_threshold=drought_th,
+            comeback_window=comeback_window,
+            exclude_system_users=exclude_system,
+        )
+        if ep.empty:
+            st.info("Engagement pulse 데이터가 없습니다.")
+        else:
+            # 핵심 지표 카드
+            mm1, mm2, mm3, mm4 = st.columns(4)
+            with mm1:
+                st.metric("평균 WIN+ 비율", f"{ep['win_or_better_rate'].mean()*100:.1f}%",
+                          help="평균적으로 곡괭이 몇 번 사면 1번 WIN 이상이 나오는가")
+            with mm2:
+                avg_gap = ep["inter_win_gap_minutes_mean"].dropna().mean()
+                st.metric("평균 WIN 간격(분)", f"{avg_gap:.2f}" if pd.notna(avg_gap) else "—",
+                          help="WIN+ 와 다음 WIN+ 사이 평균 시간")
+            with mm3:
+                st.metric("평균 최장 drought", f"{ep['longest_drought_summons'].mean():.1f}회",
+                          help=f"연속으로 WIN+ 못 본 최장 길이의 유저별 평균")
+            with mm4:
+                cb_mean = ep["comeback_rate"].dropna().mean()
+                st.metric("평균 comeback rate", f"{cb_mean*100:.1f}%" if pd.notna(cb_mean) else "—",
+                          help=f"{drought_th}연패 후 {comeback_window}번 안에 WIN+ 한 비율")
+
+            # 분포 차트
+            cc6, cc7 = st.columns(2)
+            with cc6:
+                fig_gap = px.histogram(
+                    ep[ep["inter_win_gap_minutes_mean"].notna()],
+                    x="inter_win_gap_minutes_mean",
+                    nbins=30,
+                    title="유저별 WIN 사이 평균 간격(분) — 짧을수록 흥분이 자주 옴",
+                    labels={"inter_win_gap_minutes_mean": "WIN 평균 간격 (분)"},
+                )
+                st.plotly_chart(fig_gap)
+            with cc7:
+                fig_drought = px.histogram(
+                    ep,
+                    x="longest_drought_summons",
+                    nbins=30,
+                    title="유저별 최장 drought (연속 실패 횟수)",
+                    labels={"longest_drought_summons": "연속 non-WIN 최장"},
+                )
+                st.plotly_chart(fig_drought)
+
+            st.markdown("### 유저별 Engagement Pulse 표")
+            sort_by = st.selectbox(
+                "정렬 기준",
+                ["win_or_better_rate", "comeback_rate", "longest_drought_summons",
+                 "inter_win_gap_minutes_mean", "jackpot_count"],
+                index=0,
+                key="ep_sort",
+            )
+            ep_view = ep.sort_values(sort_by, ascending=False).reset_index(drop=True)
+            st.dataframe(
+                ep_view,
+                width="stretch",
+                column_config={
+                    "user_id": "유저 ID",
+                    "username": "닉네임",
+                    "total_summons": st.column_config.NumberColumn("총 소환", format="%d"),
+                    "win_count": st.column_config.NumberColumn("WIN+ 수", format="%d"),
+                    "jackpot_count": st.column_config.NumberColumn("JACKPOT 수", format="%d"),
+                    "win_or_better_rate": st.column_config.NumberColumn("WIN+ 비율", format="%.1%"),
+                    "hit_rate": st.column_config.NumberColumn("hit rate", format="%.1%"),
+                    "inter_win_gap_summons_mean": st.column_config.NumberColumn("WIN 간격(소환)", format="%.1f"),
+                    "inter_win_gap_summons_median": st.column_config.NumberColumn("WIN 간격 중위(소환)", format="%.1f"),
+                    "inter_win_gap_minutes_mean": st.column_config.NumberColumn("WIN 간격(분)", format="%.2f"),
+                    "inter_win_gap_minutes_median": st.column_config.NumberColumn("WIN 간격 중위(분)", format="%.2f"),
+                    "longest_drought_summons": st.column_config.NumberColumn("최장 drought", format="%d"),
+                    "longest_drought_minutes": st.column_config.NumberColumn("drought 분", format="%.1f"),
+                    "drought_total_minutes": st.column_config.NumberColumn("총 drought 분", format="%.1f"),
+                    "drought_count": st.column_config.NumberColumn("drought 횟수", format="%d"),
+                    "comeback_rate": st.column_config.NumberColumn("comeback rate", format="%.1%"),
+                },
+            )
+            st.download_button(
+                "Engagement Pulse CSV",
+                data=ep_view.to_csv(index=False).encode("utf-8-sig"),
+                file_name=_ts_filename("engagement_pulse", "csv"),
+                mime="text/csv",
+            )
+
+        st.divider()
+
+        # ----- 4) 진단 -----
+        st.markdown("### 🩺 밸런스 진단")
+        if not ot_summary.empty:
+            avg_jackpot = ot_summary["pct_jackpot"].mean()
+            avg_win_or_better = ot_summary["pct_win_or_better"].mean()
+            avg_hit = ot_summary["hit_rate"].mean()
+
+            diag = []
+            if avg_jackpot < 0.05:
+                diag.append(
+                    f"⚠️ JACKPOT (3x 이상) 비율 평균 **{avg_jackpot*100:.1f}%** 로 낮음. "
+                    "유저가 '큰 한방' 을 거의 못 봐서 흥분 트리거가 부족합니다. "
+                    "블록의 reward 분포 꼬리(다이아몬드 등)를 더 부풀리거나, "
+                    "낮은 등급 곡괭이일수록 jackpot 확률을 살짝 올리는 변동성 강화 권장."
+                )
+            else:
+                diag.append(f"✓ JACKPOT 비율 평균 **{avg_jackpot*100:.1f}%** — 카지노 슬롯 수준의 적절한 변동성.")
+
+            if avg_hit < 0.5:
+                diag.append(
+                    f"⚠️ Hit rate (어떤 보상이라도 받음) 평균 **{avg_hit*100:.1f}%** 로 낮음. "
+                    "**절반 이상의 소환이 빈손**으로 끝난다는 뜻. "
+                    "곡괭이 duration 을 늘리거나 attack 을 살짝 buff 해서 최소 1개 블록은 항상 깨지게 만드는 게 1순위 개선."
+                )
+            else:
+                diag.append(f"✓ Hit rate 평균 **{avg_hit*100:.1f}%** — 대부분의 소환이 뭐라도 받습니다.")
+
+            if avg_win_or_better < 0.20:
+                diag.append(
+                    f"⚠️ WIN+ 비율 평균 **{avg_win_or_better*100:.1f}%** — 5번 사면 1번도 만족스러운 흑자가 안 나옴. "
+                    "이게 retention 깎는 가장 큰 원인. 가격 인하 또는 보상 강화 둘 중 하나 필수."
+                )
+
+            if not ep.empty:
+                cb = ep["comeback_rate"].dropna().mean()
+                if pd.notna(cb) and cb < 0.4:
+                    diag.append(
+                        f"⚠️ Comeback rate 평균 **{cb*100:.1f}%** — {drought_th}연패 후 회복 확률이 낮습니다. "
+                        "유저가 한 번 못 풀리면 '계속 못 풀린다' 는 학습이 형성되어 이탈."
+                    )
+
+            for d in diag:
+                if d.startswith("✓"):
+                    st.success(d)
+                else:
+                    st.warning(d)
 
 
 # -------- 시간대별 PNL 탭 --------

@@ -775,6 +775,295 @@ def summarize_per_summon(per_summon: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Casino-style engagement metrics
+# ---------------------------------------------------------------------------
+
+OUTCOME_TIERS = ["BUST", "LOSS", "BREAK_EVEN", "WIN", "JACKPOT"]
+"""곡괭이 1회 소환 결과 등급 — 가격 대비 net_pnl 비율 (=ROI) 기준.
+
+  BUST       : ROI < -0.75   가격의 25% 미만 회수 (사실상 꽝)
+  LOSS       : -0.75 <= ROI < 0
+  BREAK_EVEN : 0 <= ROI < 0.50  본전 ~ 살짝 흑자
+  WIN        : 0.50 <= ROI < 2.00   1.5x ~ 3x — 만족스러운 흑자
+  JACKPOT    : ROI >= 2.00   3x 이상 — 도파민 트리거
+"""
+
+
+def classify_outcome(roi: float | None) -> str:
+    """ROI(net_pnl/price) 를 5단계 결과 등급으로."""
+    if roi is None or pd.isna(roi):
+        return "UNKNOWN"
+    if roi < -0.75:
+        return "BUST"
+    if roi < 0:
+        return "LOSS"
+    if roi < 0.5:
+        return "BREAK_EVEN"
+    if roi < 2.0:
+        return "WIN"
+    return "JACKPOT"
+
+
+def compute_summon_outcomes(
+    ds: PikitDataset,
+    exclude_system_users: bool = True,
+) -> pd.DataFrame:
+    """소환별 결과에 outcome_tier + hit (gross>0) 컬럼 추가.
+
+    `compute_per_summon_returns` 결과에 카지노식 등급을 붙입니다.
+    """
+    psr = compute_per_summon_returns(ds, exclude_system_users=exclude_system_users)
+    if psr.empty:
+        return psr
+    psr = psr.copy()
+    psr["outcome_tier"] = psr["roi"].apply(classify_outcome)
+    psr["hit"] = psr["gross_reward"] > 0
+    psr = psr.sort_values(["user_id", "purchased_at"]).reset_index(drop=True)
+    return psr
+
+
+def summarize_outcome_tiers(psr: pd.DataFrame) -> pd.DataFrame:
+    """곡괭이별 등급 분포 + hit_rate + 종합 통계.
+
+    각 곡괭이에 대해 BUST/LOSS/BREAK_EVEN/WIN/JACKPOT 비율 + hit_rate.
+    """
+    if psr.empty or "outcome_tier" not in psr.columns:
+        return pd.DataFrame()
+
+    keys = ["item_id", "item_name", "mode", "category", "price", "attack", "duration_ms"]
+    grouped = psr.groupby(keys, dropna=False)
+
+    rows = []
+    for k, sub in grouped:
+        n = len(sub)
+        row = dict(zip(keys, k))
+        row["summons"] = n
+        row["hit_rate"] = float(sub["hit"].mean()) if n else 0.0
+        for tier in OUTCOME_TIERS:
+            row[f"pct_{tier.lower()}"] = float((sub["outcome_tier"] == tier).sum() / n) if n else 0.0
+        row["pct_win_or_better"] = float((sub["outcome_tier"].isin(["WIN", "JACKPOT"])).sum() / n) if n else 0.0
+        row["pct_jackpot"] = float((sub["outcome_tier"] == "JACKPOT").sum() / n) if n else 0.0
+        row["expected_roi"] = float(sub["roi"].mean()) if n else None  # = casino RTP - 1
+        rows.append(row)
+    out = pd.DataFrame(rows).sort_values(["mode", "category", "price"]).reset_index(drop=True)
+    return out
+
+
+def compute_engagement_pulse(
+    ds: PikitDataset,
+    drought_threshold: int = 5,
+    comeback_window: int = 3,
+    exclude_system_users: bool = True,
+) -> pd.DataFrame:
+    """유저별 카지노식 흥미도 지표.
+
+    - inter_win_gap_summons : WIN+ 결과 사이의 평균 소환 수
+    - inter_win_gap_minutes : WIN+ 결과 사이의 평균 시간 (분)
+    - longest_drought_summons : 연속 non-WIN(BUST/LOSS/BREAK_EVEN) 최장
+    - longest_drought_minutes : 그 drought 기간 (분)
+    - drought_total_minutes : 전체 drought 시간 합
+    - comeback_rate : drought_threshold 이상 못 이겼을 때, 그 다음 comeback_window 안에 WIN+ 나온 비율
+    - jackpot_count, win_count, total_summons
+    """
+    psr = compute_summon_outcomes(ds, exclude_system_users=exclude_system_users)
+    if psr.empty:
+        return pd.DataFrame()
+
+    rows = []
+    for uid, sub in psr.groupby("user_id"):
+        s = sub.sort_values("purchased_at").reset_index(drop=True)
+        is_win = s["outcome_tier"].isin(["WIN", "JACKPOT"]).values
+
+        # WIN+ 의 인덱스
+        win_idxs = np.where(is_win)[0]
+        if len(win_idxs) >= 2:
+            gaps_count = np.diff(win_idxs)
+            gap_count_mean = float(gaps_count.mean())
+            gap_count_median = float(np.median(gaps_count))
+            # 시간 차이
+            win_times = s.loc[win_idxs, "purchased_at"].reset_index(drop=True)
+            gaps_min = (win_times.diff().dt.total_seconds() / 60).dropna().tolist()
+            gap_min_mean = float(np.mean(gaps_min)) if gaps_min else None
+            gap_min_median = float(np.median(gaps_min)) if gaps_min else None
+        else:
+            gap_count_mean = gap_count_median = None
+            gap_min_mean = gap_min_median = None
+
+        # Drought = 연속 non-WIN
+        droughts = []
+        cur_run = 0
+        cur_start = None
+        max_drought = 0
+        max_drought_start = None
+        max_drought_end = None
+        for i, w in enumerate(is_win):
+            if not w:
+                if cur_run == 0:
+                    cur_start = i
+                cur_run += 1
+                if cur_run > max_drought:
+                    max_drought = cur_run
+                    max_drought_start = cur_start
+                    max_drought_end = i
+            else:
+                if cur_run > 0:
+                    droughts.append(cur_run)
+                cur_run = 0
+        if cur_run > 0:
+            droughts.append(cur_run)
+
+        if max_drought_start is not None and max_drought_end is not None and max_drought_end > max_drought_start:
+            longest_drought_min = (
+                s.loc[max_drought_end, "purchased_at"]
+                - s.loc[max_drought_start, "purchased_at"]
+            ).total_seconds() / 60
+        else:
+            longest_drought_min = 0
+
+        drought_total_min = 0
+        cur_run = 0
+        run_start = None
+        for i, w in enumerate(is_win):
+            if not w:
+                if cur_run == 0:
+                    run_start = i
+                cur_run += 1
+            else:
+                if cur_run > 0 and run_start is not None:
+                    drought_total_min += (
+                        s.loc[i, "purchased_at"] - s.loc[run_start, "purchased_at"]
+                    ).total_seconds() / 60
+                cur_run = 0
+                run_start = None
+        if cur_run > 0 and run_start is not None:
+            drought_total_min += (
+                s.loc[len(s) - 1, "purchased_at"] - s.loc[run_start, "purchased_at"]
+            ).total_seconds() / 60
+
+        # Comeback rate
+        comeback_total = 0
+        comeback_success = 0
+        cur_run = 0
+        for i, w in enumerate(is_win):
+            if not w:
+                cur_run += 1
+            else:
+                if cur_run >= drought_threshold:
+                    comeback_total += 1
+                    # 이미 win 이라 1로 친다 — 즉 drought 끝나고 첫 결과가 WIN+ 인지.
+                    comeback_success += 1
+                cur_run = 0
+        # 또 다른 정의: drought_threshold 도달 시점부터 comeback_window 내에 WIN+ 가 있었는지.
+        cb2_total = 0
+        cb2_success = 0
+        cur_run = 0
+        for i, w in enumerate(is_win):
+            if not w:
+                cur_run += 1
+                if cur_run == drought_threshold:
+                    cb2_total += 1
+                    # 이후 comeback_window 안에 WIN+
+                    upper = min(i + comeback_window + 1, len(is_win))
+                    if any(is_win[i + 1:upper]):
+                        cb2_success += 1
+            else:
+                cur_run = 0
+        comeback_rate = (cb2_success / cb2_total) if cb2_total else None
+
+        rows.append({
+            "user_id": int(uid),
+            "total_summons": int(len(s)),
+            "win_count": int(is_win.sum()),
+            "jackpot_count": int((s["outcome_tier"] == "JACKPOT").sum()),
+            "win_or_better_rate": float(is_win.mean()) if len(is_win) else 0.0,
+            "hit_rate": float(s["hit"].mean()),
+            "inter_win_gap_summons_mean": gap_count_mean,
+            "inter_win_gap_summons_median": gap_count_median,
+            "inter_win_gap_minutes_mean": gap_min_mean,
+            "inter_win_gap_minutes_median": gap_min_median,
+            "longest_drought_summons": int(max_drought),
+            "longest_drought_minutes": float(longest_drought_min),
+            "drought_total_minutes": float(drought_total_min),
+            "drought_count": len(droughts),
+            "comeback_rate": comeback_rate,
+        })
+
+    out = pd.DataFrame(rows)
+    if not out.empty:
+        users = ds.users[["user_id", "username"]]
+        out = out.merge(users, on="user_id", how="left")
+    return out.sort_values("win_or_better_rate", ascending=False, ignore_index=True)
+
+
+def compute_per_minute_grid(
+    ds: PikitDataset,
+    user_ids: list[int] | None = None,
+    freq: str = "1min",
+    exclude_system_users: bool = True,
+) -> pd.DataFrame:
+    """유저 × 시간 버킷 그리드 — 카지노 히트맵 데이터.
+
+    각 (user, period) 셀에 다음을 계산:
+    - delta_pnl    : block_reward - item_spend 합 (양수=흑자, 음수=적자)
+    - n_summons    : ITEM_PURCHASE 수
+    - n_rewards    : BLOCK_REWARD 수
+    - max_reward   : 그 버킷에서 받은 최대 단일 보상 (큰 값 = 그 순간 흥분)
+    - any_jackpot  : 그 버킷에 JACKPOT(>= 3x ROI) 결과가 있었는지
+    """
+    tx = ds.filter_real_users(ds.transactions)
+    if exclude_system_users:
+        tx = ds.filter_system_users(tx)
+    if user_ids is not None:
+        tx = tx[tx["user_id"].isin(user_ids)]
+    if tx.empty:
+        return pd.DataFrame(columns=[
+            "user_id", "username", "period", "delta_pnl", "n_summons",
+            "n_rewards", "max_reward", "any_jackpot",
+        ])
+
+    tx = tx.copy()
+    tx["abs_amount"] = tx["amount"].abs()
+    tx["signed"] = np.where(
+        tx["tx_type"] == "BLOCK_REWARD", tx["abs_amount"],
+        np.where(tx["tx_type"] == "ITEM_PURCHASE", -tx["abs_amount"], 0),
+    )
+    tx["period"] = tx["created_at"].dt.floor(freq)
+
+    # delta_pnl
+    pnl_grid = (
+        tx.groupby(["user_id", "period"])
+        .agg(
+            delta_pnl=("signed", "sum"),
+            n_summons=("tx_type", lambda s: int((s == "ITEM_PURCHASE").sum())),
+            n_rewards=("tx_type", lambda s: int((s == "BLOCK_REWARD").sum())),
+            max_reward=("abs_amount", lambda s: float(s[tx.loc[s.index, "tx_type"] == "BLOCK_REWARD"].max()) if any(tx.loc[s.index, "tx_type"] == "BLOCK_REWARD") else 0.0),
+        )
+        .reset_index()
+    )
+
+    # any_jackpot — 그 (user, period) 안에 JACKPOT 결과 소환이 포함됐는지.
+    psr = compute_summon_outcomes(ds, exclude_system_users=exclude_system_users)
+    if not psr.empty:
+        if user_ids is not None:
+            psr = psr[psr["user_id"].isin(user_ids)]
+        psr = psr.copy()
+        psr["period"] = psr["purchased_at"].dt.floor(freq)
+        jpx = (
+            psr.groupby(["user_id", "period"])["outcome_tier"]
+            .apply(lambda s: bool((s == "JACKPOT").any()))
+            .reset_index(name="any_jackpot")
+        )
+        pnl_grid = pnl_grid.merge(jpx, on=["user_id", "period"], how="left")
+        pnl_grid["any_jackpot"] = pnl_grid["any_jackpot"].fillna(False)
+    else:
+        pnl_grid["any_jackpot"] = False
+
+    users = ds.users[["user_id", "username"]]
+    pnl_grid = pnl_grid.merge(users, on="user_id", how="left")
+    return pnl_grid.sort_values(["user_id", "period"], ignore_index=True)
+
+
+# ---------------------------------------------------------------------------
 # Top-level KPI summary
 # ---------------------------------------------------------------------------
 
