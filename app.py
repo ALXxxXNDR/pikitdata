@@ -733,8 +733,8 @@ with tab_summon:
         # ---- 곡괭이별 ROI 최대/최소 + 확률 분포 ----
         st.markdown("### 📊 곡괭이별 손익 범위 + 확률 분포")
         st.write(
-            "이 곡괭이를 한 번 사면 **최악 / 최고로 어디까지 갈 수 있는지**, 그리고 각 손익 구간에 떨어질 **확률**입니다. "
-            "100번 산다고 가정하고 몇 번이 어떤 결과로 끝나는지를 보세요."
+            "이 곡괭이를 한 번 사면 어디 떨어질지, **서로 겹치지 않는 5개 구간의 확률** (합 = 1.0). "
+            "그 다음 잭팟 분석용 **누적 꼬리 확률** 은 별도 표로."
         )
 
         if not view_psr.empty:
@@ -748,15 +748,19 @@ with tab_summon:
                     continue
                 pnl = sub["net_pnl"].values
                 roi = sub["roi"].values
-                # 손익 구간 확률 (가격 대비 net_pnl 비율 기준)
-                p_total_loss = float((pnl <= -0.99 * price).mean())   # ≈ -100% (전손)
-                p_loss = float((pnl < 0).mean())                      # 적자
-                p_break_even = float(((pnl >= 0) & (pnl < 0.5 * price)).mean())
-                p_win_15x = float((pnl >= 0.5 * price).mean())        # 1.5x 이상
-                p_win_2x = float((pnl >= 1.0 * price).mean())         # 2x 이상
-                p_win_3x = float((pnl >= 2.0 * price).mean())         # 3x 이상
-                p_win_5x = float((pnl >= 4.0 * price).mean())         # 5x 이상
-                p_win_10x = float((pnl >= 9.0 * price).mean())        # 10x 이상
+
+                # ---- DISJOINT 5단계 (서로 겹치지 않음, 합 = 1.0) ----
+                p_bust       = float((roi <= -0.5).mean())                          # 가격 절반 이상 잃음
+                p_loss       = float(((roi > -0.5) & (roi < 0)).mean())             # 작은 손실
+                p_break_even = float(((roi >= 0) & (roi < 0.5)).mean())             # 본전 ~ 1.5x
+                p_win        = float(((roi >= 0.5) & (roi < 2.0)).mean())           # 1.5x ~ 3x
+                p_jackpot    = float((roi >= 2.0).mean())                           # 3x 이상
+
+                # ---- 누적 꼬리 (잭팟 분석용, 분리 표시) ----
+                p_cum_2x  = float((roi >= 1.0).mean())   # 2배 이상 (= 200% return)
+                p_cum_3x  = float((roi >= 2.0).mean())   # 3배 이상
+                p_cum_5x  = float((roi >= 4.0).mean())   # 5배 이상
+                p_cum_10x = float((roi >= 9.0).mean())   # 10배 이상
 
                 ranges.append({
                     "item_id": int(iid),
@@ -770,50 +774,123 @@ with tab_summon:
                     "max_net_pnl": float(np.max(pnl)),
                     "min_roi": float(np.min(roi)),
                     "max_roi": float(np.max(roi)),
-                    # 확률
-                    "P(완전손실)": p_total_loss,
-                    "P(손실)": p_loss,
-                    "P(본전~1.5x)": p_break_even,
-                    "P(1.5x↑)": p_win_15x,
-                    "P(2x↑)": p_win_2x,
-                    "P(3x↑)": p_win_3x,
-                    "P(5x↑)": p_win_5x,
-                    "P(10x↑)": p_win_10x,
+                    # disjoint
+                    "P_bust": p_bust,
+                    "P_loss": p_loss,
+                    "P_break_even": p_break_even,
+                    "P_win": p_win,
+                    "P_jackpot": p_jackpot,
+                    "P_sum_check": p_bust + p_loss + p_break_even + p_win + p_jackpot,
+                    # cumulative tail
+                    "P_cum_2x": p_cum_2x,
+                    "P_cum_3x": p_cum_3x,
+                    "P_cum_5x": p_cum_5x,
+                    "P_cum_10x": p_cum_10x,
                 })
 
             ranges_df = pd.DataFrame(ranges).sort_values(
                 ["mode", "category", "price"]
             ).reset_index(drop=True)
+
+            st.markdown(
+                "**Disjoint 5단계** — 5개 확률은 **서로 겹치지 않으며 합 = 1.0** "
+                "(맨 우측 `합 검증` 컬럼으로 확인 가능)"
+            )
+            disjoint_cols = [
+                "item_id", "item_name", "mode", "price", "summons",
+                "min_net_pnl", "max_net_pnl", "min_roi", "max_roi",
+                "P_bust", "P_loss", "P_break_even", "P_win", "P_jackpot", "P_sum_check",
+            ]
             st.dataframe(
-                ranges_df,
+                ranges_df[disjoint_cols],
                 width="stretch",
                 column_config={
                     "item_id": "ID",
                     "item_name": "이름",
                     "mode": "모드",
-                    "category": "카테고리",
                     "price": st.column_config.NumberColumn("가격", format="%d"),
                     "summons": st.column_config.NumberColumn("소환 수", format="%d"),
                     "min_net_pnl": st.column_config.NumberColumn("최저 net PNL", format="%d"),
                     "max_net_pnl": st.column_config.NumberColumn("최고 net PNL", format="%d"),
                     "min_roi": st.column_config.NumberColumn("최저 ROI", format="%.2f"),
                     "max_roi": st.column_config.NumberColumn("최고 ROI", format="%.2f"),
-                    "P(완전손실)": st.column_config.NumberColumn("P(거의 전손)", format="%.1%"),
-                    "P(손실)": st.column_config.NumberColumn("P(적자)", format="%.1%"),
-                    "P(본전~1.5x)": st.column_config.NumberColumn("P(본전~1.5x)", format="%.1%"),
-                    "P(1.5x↑)": st.column_config.NumberColumn("P(1.5x ↑)", format="%.1%"),
-                    "P(2x↑)": st.column_config.NumberColumn("P(2x ↑)", format="%.1%"),
-                    "P(3x↑)": st.column_config.NumberColumn("P(3x ↑)", format="%.1%"),
-                    "P(5x↑)": st.column_config.NumberColumn("P(5x ↑)", format="%.1%"),
-                    "P(10x↑)": st.column_config.NumberColumn("P(10x ↑)", format="%.1%"),
+                    "P_bust": st.column_config.NumberColumn("🔴 BUST (≤-50%)", format="%.1%"),
+                    "P_loss": st.column_config.NumberColumn("🟠 LOSS (-50%~0)", format="%.1%"),
+                    "P_break_even": st.column_config.NumberColumn("🟡 BREAK (0~+50%)", format="%.1%"),
+                    "P_win": st.column_config.NumberColumn("🟢 WIN (+50%~+200%)", format="%.1%"),
+                    "P_jackpot": st.column_config.NumberColumn("🌟 JACKPOT (≥+200%)", format="%.1%"),
+                    "P_sum_check": st.column_config.NumberColumn("합 검증", format="%.4f"),
                 },
             )
+
+            st.markdown(
+                "**누적 꼬리 확률** — 각각 *그 배수 이상* 이라는 의미. "
+                "예: `P(2x↑)=15%` 면 100번 사면 약 15번이 가격의 2배 이상 받음. "
+                "**이 확률들은 서로 겹침** (3x ↑ 안에 5x ↑ 가 포함). 합쳐서 더하면 안 됨."
+            )
+            cum_cols = [
+                "item_id", "item_name", "mode", "price",
+                "P_cum_2x", "P_cum_3x", "P_cum_5x", "P_cum_10x", "max_roi",
+            ]
+            st.dataframe(
+                ranges_df[cum_cols],
+                width="stretch",
+                column_config={
+                    "item_id": "ID",
+                    "item_name": "이름",
+                    "mode": "모드",
+                    "price": st.column_config.NumberColumn("가격", format="%d"),
+                    "P_cum_2x": st.column_config.NumberColumn("P(2x↑)", format="%.1%"),
+                    "P_cum_3x": st.column_config.NumberColumn("P(3x↑)", format="%.1%"),
+                    "P_cum_5x": st.column_config.NumberColumn("P(5x↑)", format="%.1%"),
+                    "P_cum_10x": st.column_config.NumberColumn("P(10x↑)", format="%.1%"),
+                    "max_roi": st.column_config.NumberColumn("최고 ROI", format="%.2f"),
+                },
+            )
+
             st.download_button(
-                "확률 분포 CSV 다운로드",
+                "전체 확률 분포 CSV 다운로드",
                 data=ranges_df.to_csv(index=False).encode("utf-8-sig"),
                 file_name=_ts_filename("per_summon_probability", "csv"),
                 mime="text/csv",
             )
+
+            # 곡괭이별 disjoint 분포 stacked bar — 한눈에 보기
+            st.markdown("**Disjoint 5단계 적층 막대** (곡괭이별 분포 시각화, 합 = 1.0)")
+            tier_color = {
+                "🔴 BUST": "#c44",
+                "🟠 LOSS": "#e80",
+                "🟡 BREAK_EVEN": "#dc0",
+                "🟢 WIN": "#2c2",
+                "🌟 JACKPOT": "#08c",
+            }
+            stacked_long = ranges_df.melt(
+                id_vars=["item_name", "mode", "price"],
+                value_vars=["P_bust", "P_loss", "P_break_even", "P_win", "P_jackpot"],
+                var_name="tier_key",
+                value_name="prob",
+            )
+            tier_label_map = {
+                "P_bust": "🔴 BUST",
+                "P_loss": "🟠 LOSS",
+                "P_break_even": "🟡 BREAK_EVEN",
+                "P_win": "🟢 WIN",
+                "P_jackpot": "🌟 JACKPOT",
+            }
+            stacked_long["tier"] = stacked_long["tier_key"].map(tier_label_map)
+            fig_stacked = px.bar(
+                stacked_long,
+                x="item_name",
+                y="prob",
+                color="tier",
+                color_discrete_map=tier_color,
+                title="곡괭이별 결과 분포 (적층, 모두 합 = 1.0)",
+                labels={"item_name": "곡괭이", "prob": "확률", "tier": "등급"},
+                category_orders={
+                    "tier": ["🔴 BUST", "🟠 LOSS", "🟡 BREAK_EVEN", "🟢 WIN", "🌟 JACKPOT"],
+                },
+            )
+            st.plotly_chart(fig_stacked)
 
             # ROI 분포 히스토그램 (곡괭이별 facet)
             st.markdown("**ROI 분포** — 같은 곡괭이를 여러 번 샀을 때 각 결과가 얼마나 자주 나오나")
