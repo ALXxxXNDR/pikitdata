@@ -1329,17 +1329,8 @@ with tab_hourly:
             picked_ids = [option_to_id[label] for label in picked]
             results_placeholder = st.container()
 
-            with st.status("⏱️ 데이터 처리 중…", expanded=True) as status:
-                progress = st.progress(0)
+            with st.status("⏱️ 데이터 처리 중…", expanded=False) as status:
                 _t0 = datetime.now()
-
-                st.write(
-                    f"📥 1/6 — 슬라이스: "
-                    f"`{h_start_dt.strftime('%Y-%m-%d %H:%M')}` ~ "
-                    f"`{h_end_dt.strftime('%Y-%m-%d %H:%M')}` · "
-                    f"모드 {selected_game_mode} · 지갑 {len(picked_ids)}개"
-                )
-                progress.progress(10)
 
                 ts = _cached_user_timeseries(
                     snapshot_date=latest_choice,
@@ -1353,15 +1344,11 @@ with tab_hourly:
                 )
                 _elapsed = (datetime.now() - _t0).total_seconds()
                 st.write(
-                    f"⏱️ 2/6 — 시계열 집계 완료 · **{len(ts):,}개 행** · "
-                    f"{h_freq_label} 단위 · {_elapsed:.2f}초 "
-                    f"{'(캐시 적중 ⚡)' if _elapsed < 0.05 else ''}"
+                    f"⏱️ 시계열 집계 · {len(ts):,}행 · {h_freq_label} 단위 · "
+                    f"{_elapsed:.2f}초 {'(캐시 적중 ⚡)' if _elapsed < 0.05 else ''}"
                 )
-                progress.progress(25)
 
                 if ts.empty:
-                    st.write("⚠️ 트랜잭션 없음")
-                    progress.progress(100)
                     status.update(label="⚠️ 데이터 없음", state="error", expanded=True)
                 else:
                     def _make_label(r):
@@ -1370,7 +1357,6 @@ with tab_hourly:
                             return f"🤖 {active_bots[uid]}"
                         return f"#{uid} {r['username'] or ''}".strip()
 
-                    st.write("📊 3/6 — 차트 데이터 가공")
                     if view_mode == "선택 지갑 합산":
                         grouped = (
                             ts.groupby("period")
@@ -1390,8 +1376,6 @@ with tab_hourly:
                     else:
                         series = ts.copy()
                         series["label"] = series.apply(_make_label, axis=1)
-                    progress.progress(40)
-
                     with results_placeholder:
                         total_reward = float(series["block_reward"].sum())
                         total_spend = float(series["item_spend"].sum())
@@ -1406,20 +1390,21 @@ with tab_hourly:
                         with m4:
                             st.metric("순 PNL", _fmt_int(total_pnl))
 
-                    st.write(f"📈 4/6 — 누적 PNL 라인 ({len(series):,}개 점)")
                     fig_cum = px.line(
                         series, x="period", y="cum_pnl", color="label",
                         markers=False,
                         title=f"누적 PNL — {h_freq_label} 단위",
                         labels={"period": "기간", "cum_pnl": "누적 PNL", "label": "지갑"},
                     )
+                    # WebGL 트레이스 변환 — 점 5만개 넘어도 부드럽게 렌더.
+                    fig_cum.update_traces(mode="lines")
+                    for trace in fig_cum.data:
+                        trace.type = "scattergl"
                     fig_cum.add_hline(y=0, line_dash="dot", line_color="white")
                     with results_placeholder:
                         st.markdown("### 누적 PNL 추이")
                         st.plotly_chart(fig_cum)
-                    progress.progress(60)
 
-                    st.write("📊 5/6 — 기간별 PNL 막대")
                     fig_bar = px.bar(
                         series, x="period", y="pnl", color="label", barmode="group",
                         title=f"기간별 PNL — {h_freq_label}",
@@ -1429,9 +1414,7 @@ with tab_hourly:
                     with results_placeholder:
                         st.markdown("### 기간별 PNL")
                         st.plotly_chart(fig_bar)
-                    progress.progress(75)
 
-                    st.write("🎨 6/6 — 보상/지출 분리 + CSV 준비")
                     fig_rw = px.bar(
                         series, x="period", y="block_reward", color="label", barmode="group",
                         title=f"블록 보상 — {h_freq_label}",
@@ -1500,7 +1483,6 @@ with tab_hourly:
                         with st.expander("시계열 원본 (전체 행)"):
                             st.dataframe(ts_with_label, width="stretch")
 
-                    progress.progress(100)
                     total_elapsed = (datetime.now() - _t0).total_seconds()
                     status.update(
                         label=f"✓ 완료 — 총 {total_elapsed:.2f}초",

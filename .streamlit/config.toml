@@ -10,6 +10,12 @@ enableCORS = false
 enableXsrfProtection = true
 maxUploadSize = 200          # 새 스냅샷 CSV 업로드 여유 (MB)
 
+[client]
+# 우상단의 "RUNNING 🏃 / Stop" 개발자 toolbar 숨김 — 대시보드 사용자에겐 불필요.
+# minimal: 햄버거 메뉴만, viewer: 메뉴 + 화면 모드 토글, developer: 전부 보임.
+toolbarMode = "minimal"
+showSidebarNavigation = true
+
 [theme]
 base = "dark"
 primaryColor = "#f5b800"
