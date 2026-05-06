@@ -26,9 +26,10 @@ services:
       # 데이터 폴더 — NAS 에서 직접 파일 추가하면 즉시 반영. 컨테이너는 read-only.
       # 처음에 /volume1/docker/pikit/data/2026.05.06/ 같은 폴더 만들어 두면 됨.
       - ./data:/app/data:ro
-      # 캐시 볼륨 — Parquet/pickle 캐시. 컨테이너 재시작 후에도 보존되어
-      # CSV 파싱 오버헤드 (수 초) 를 0.2초로 단축. 자동 생성됨.
-      - ./cache:/app/cache:rw
+      # 캐시 named volume — Parquet/pickle 자동 보존.
+      # bind mount 대신 named volume 사용 — Synology Docker 가 bind source 를
+      # 자동 생성 안 해주는 함정 회피, rsync --delete 와도 격리.
+      - pikit_cache:/app/cache
 
     environment:
       # 공개 모드 — 사이드바에서 데이터 경로 입력칸 숨김 + raw CSV 다운로드 비활성화.
@@ -48,3 +49,8 @@ services:
           memory: 2G
         reservations:
           memory: 512M
+
+# Named volumes — Docker 가 자동으로 만들고 관리.
+# 컨테이너 재빌드/재시작 후에도 보존. 절대 사라지지 않음.
+volumes:
+  pikit_cache:
