@@ -308,7 +308,6 @@ tab_labels = [
     "👤 유저",
     "🎯 승리 경험",
     "🎰 곡괭이 소환 ROI",
-    "🎲 카지노 분석",
     "⏱️ 시간대별 PNL",
     "🔍 유저 상세 / 그룹 분석",
     "⛏️ 곡괭이 / TNT",
@@ -316,25 +315,16 @@ tab_labels = [
 ]
 if not PUBLIC_MODE:
     tab_labels.append("📦 원본 데이터")
-tab_labels.extend(["│ 🧪 [부가] 시뮬레이터", "│ 📤 [부가] 밸런스 적용"])
 
 _tabs = st.tabs(tab_labels)
 tab_users = _tabs[0]
 tab_winning = _tabs[1]
 tab_summon = _tabs[2]
-tab_casino = _tabs[3]
-tab_hourly = _tabs[4]
-tab_user_detail = _tabs[5]
-tab_items = _tabs[6]
-tab_blocks = _tabs[7]
-if PUBLIC_MODE:
-    tab_data = None
-    tab_sim = _tabs[8]
-    tab_export = _tabs[9]
-else:
-    tab_data = _tabs[8]
-    tab_sim = _tabs[9]
-    tab_export = _tabs[10]
+tab_hourly = _tabs[3]
+tab_user_detail = _tabs[4]
+tab_items = _tabs[5]
+tab_blocks = _tabs[6]
+tab_data = _tabs[7] if not PUBLIC_MODE else None
 
 
 # -------- 유저 탭 --------
@@ -700,6 +690,123 @@ with tab_summon:
                 mime="text/csv",
             )
 
+        # ---- 곡괭이별 ROI 최대/최소 + 확률 분포 ----
+        st.markdown("### 📊 곡괭이별 손익 범위 + 확률 분포")
+        st.write(
+            "이 곡괭이를 한 번 사면 **최악 / 최고로 어디까지 갈 수 있는지**, 그리고 각 손익 구간에 떨어질 **확률**입니다. "
+            "100번 산다고 가정하고 몇 번이 어떤 결과로 끝나는지를 보세요."
+        )
+
+        if not view_psr.empty:
+            ranges = []
+            for (iid, name, mode_name, cat, price, atk, dur), sub in view_psr.groupby(
+                ["item_id", "item_name", "mode", "category", "price", "attack", "duration_ms"],
+                dropna=False,
+            ):
+                n = len(sub)
+                if n == 0 or pd.isna(price) or price <= 0:
+                    continue
+                pnl = sub["net_pnl"].values
+                roi = sub["roi"].values
+                # 손익 구간 확률 (가격 대비 net_pnl 비율 기준)
+                p_total_loss = float((pnl <= -0.99 * price).mean())   # ≈ -100% (전손)
+                p_loss = float((pnl < 0).mean())                      # 적자
+                p_break_even = float(((pnl >= 0) & (pnl < 0.5 * price)).mean())
+                p_win_15x = float((pnl >= 0.5 * price).mean())        # 1.5x 이상
+                p_win_2x = float((pnl >= 1.0 * price).mean())         # 2x 이상
+                p_win_3x = float((pnl >= 2.0 * price).mean())         # 3x 이상
+                p_win_5x = float((pnl >= 4.0 * price).mean())         # 5x 이상
+                p_win_10x = float((pnl >= 9.0 * price).mean())        # 10x 이상
+
+                ranges.append({
+                    "item_id": int(iid),
+                    "item_name": name,
+                    "mode": mode_name,
+                    "category": cat,
+                    "price": int(price),
+                    "summons": n,
+                    # 최대/최소
+                    "min_net_pnl": float(np.min(pnl)),
+                    "max_net_pnl": float(np.max(pnl)),
+                    "min_roi": float(np.min(roi)),
+                    "max_roi": float(np.max(roi)),
+                    # 확률
+                    "P(완전손실)": p_total_loss,
+                    "P(손실)": p_loss,
+                    "P(본전~1.5x)": p_break_even,
+                    "P(1.5x↑)": p_win_15x,
+                    "P(2x↑)": p_win_2x,
+                    "P(3x↑)": p_win_3x,
+                    "P(5x↑)": p_win_5x,
+                    "P(10x↑)": p_win_10x,
+                })
+
+            ranges_df = pd.DataFrame(ranges).sort_values(
+                ["mode", "category", "price"]
+            ).reset_index(drop=True)
+            st.dataframe(
+                ranges_df,
+                width="stretch",
+                column_config={
+                    "item_id": "ID",
+                    "item_name": "이름",
+                    "mode": "모드",
+                    "category": "카테고리",
+                    "price": st.column_config.NumberColumn("가격", format="%d"),
+                    "summons": st.column_config.NumberColumn("소환 수", format="%d"),
+                    "min_net_pnl": st.column_config.NumberColumn("최저 net PNL", format="%d"),
+                    "max_net_pnl": st.column_config.NumberColumn("최고 net PNL", format="%d"),
+                    "min_roi": st.column_config.NumberColumn("최저 ROI", format="%.2f"),
+                    "max_roi": st.column_config.NumberColumn("최고 ROI", format="%.2f"),
+                    "P(완전손실)": st.column_config.NumberColumn("P(거의 전손)", format="%.1%"),
+                    "P(손실)": st.column_config.NumberColumn("P(적자)", format="%.1%"),
+                    "P(본전~1.5x)": st.column_config.NumberColumn("P(본전~1.5x)", format="%.1%"),
+                    "P(1.5x↑)": st.column_config.NumberColumn("P(1.5x ↑)", format="%.1%"),
+                    "P(2x↑)": st.column_config.NumberColumn("P(2x ↑)", format="%.1%"),
+                    "P(3x↑)": st.column_config.NumberColumn("P(3x ↑)", format="%.1%"),
+                    "P(5x↑)": st.column_config.NumberColumn("P(5x ↑)", format="%.1%"),
+                    "P(10x↑)": st.column_config.NumberColumn("P(10x ↑)", format="%.1%"),
+                },
+            )
+            st.download_button(
+                "확률 분포 CSV 다운로드",
+                data=ranges_df.to_csv(index=False).encode("utf-8-sig"),
+                file_name=_ts_filename("per_summon_probability", "csv"),
+                mime="text/csv",
+            )
+
+            # ROI 분포 히스토그램 (곡괭이별 facet)
+            st.markdown("**ROI 분포** — 같은 곡괭이를 여러 번 샀을 때 각 결과가 얼마나 자주 나오나")
+            roi_clip = view_psr.copy()
+            # 너무 큰 값 (100x+ 같은 outlier) 시각화 시 클리핑
+            roi_clip["roi_clip"] = roi_clip["roi"].clip(lower=-1, upper=10)
+            fig_hist = px.histogram(
+                roi_clip,
+                x="roi_clip",
+                color="item_name",
+                facet_col="item_name",
+                facet_col_wrap=3,
+                nbins=40,
+                title="곡괭이별 ROI 분포 (-1 ~ 10x 구간으로 자름)",
+                labels={"roi_clip": "ROI (= net_pnl / price)", "item_name": "곡괭이"},
+            )
+            fig_hist.update_yaxes(matches=None, showticklabels=True)
+            fig_hist.add_vline(x=0, line_dash="dot", line_color="white")
+            st.plotly_chart(fig_hist)
+
+            # 곡괭이별 min ~ max ROI 막대
+            st.markdown("**손익 범위** — 곡괭이별 최저 ~ 최고 ROI")
+            fig_range = px.bar(
+                ranges_df,
+                x="item_name",
+                y=["min_roi", "max_roi"],
+                barmode="group",
+                title="곡괭이별 ROI 최저 vs 최고",
+                labels={"item_name": "곡괭이", "value": "ROI", "variable": "지표"},
+            )
+            fig_range.add_hline(y=0, line_color="white", line_dash="dot")
+            st.plotly_chart(fig_range)
+
         st.markdown("### 밸런스 진단")
         if not summ.empty:
             worst = summ.sort_values("win_rate").head(1).iloc[0]
@@ -722,510 +829,197 @@ with tab_summon:
             )
 
 
-# -------- 🎲 카지노 분석 탭 --------
-with tab_casino:
-    st.subheader("카지노식 흥미도 분석")
+
+# -------- ⏱️ 시간대별 PNL 탭 --------
+with tab_hourly:
+    st.subheader("시간대별 PNL — 지갑 단위 + 시간 단위 분석")
     st.write(
-        "장기적으로는 시스템(하우스) 이 이깁니다. 하지만 **유저 입장에서 충분히 자주 흥분하는 순간**이 있어야 "
-        "다시 옵니다. 각 곡괭이 소환을 카지노 베팅처럼 5단계로 분류하고, 흥분 빈도 / 회복 가능성을 측정합니다."
+        "지갑(주소)을 직접 골라 시간 단위와 조회 기간을 설정하고 PNL 추이를 봅니다. "
+        "선택한 지갑들만 필터해서 계산하므로 빠르게 뜹니다."
     )
 
-    # 등급 기준 안내
-    with st.expander("등급 기준 (가격 대비 net_pnl 비율 = ROI)", expanded=False):
-        st.markdown(
-            """
-            | 등급 | ROI 범위 | 의미 |
-            |---|---|---|
-            | 🔴 BUST | < -75% | 거의 빈손 (가격의 25% 미만 회수) |
-            | 🟠 LOSS | -75% ~ 0% | 손해 |
-            | 🟡 BREAK_EVEN | 0% ~ +50% | 본전 ~ 살짝 흑자 |
-            | 🟢 WIN | +50% ~ +200% | 1.5x ~ 3x 흑자 (도파민 트리거) |
-            | 🌟 JACKPOT | ≥ +200% | 3x 이상 (큰 흥분) |
-            """
-        )
+    # ---- 지갑(유저) 후보 선정: PNL 표 기준 (이미 quest/system 필터 반영됨) ----
+    pnl_for_picker = compute_user_pnl(ds, exclude_system_users=exclude_system)
+    if exclude_system and not pnl_for_picker.empty and ds.system_user_ids:
+        pnl_for_picker = pnl_for_picker[
+            ~pnl_for_picker["user_id"].isin(ds.system_user_ids)
+        ].reset_index(drop=True)
+    if not pnl_for_picker.empty and ds.quest_user_ids:
+        pnl_for_picker = pnl_for_picker[
+            ~pnl_for_picker["user_id"].isin(ds.quest_user_ids)
+        ].reset_index(drop=True)
 
-    psr = compute_summon_outcomes(ds, exclude_system_users=exclude_system)
-    if psr.empty:
-        st.info("이 조건에 곡괭이 소환 데이터가 없습니다.")
+    if pnl_for_picker.empty:
+        st.info("선택된 모드/기간에 트랜잭션이 있는 유저가 없습니다.")
     else:
-        # ----- 1) Outcome 등급 분포 -----
-        st.markdown("### 1️⃣ 곡괭이별 Outcome 등급 분포")
-        cat_filter = st.radio("카테고리", ["PICKAXE", "TNT", "전체"], horizontal=True, index=0,
-                              key="casino_cat")
-        view_psr = psr if cat_filter == "전체" else psr[psr["category"] == cat_filter]
-        ot_summary = summarize_outcome_tiers(view_psr)
-        if not ot_summary.empty:
-            tier_color = {
-                "pct_bust": "#c44",
-                "pct_loss": "#e80",
-                "pct_break_even": "#dc0",
-                "pct_win": "#2c2",
-                "pct_jackpot": "#08c",
-            }
-            tier_label = {
-                "pct_bust": "🔴 BUST",
-                "pct_loss": "🟠 LOSS",
-                "pct_break_even": "🟡 BREAK_EVEN",
-                "pct_win": "🟢 WIN",
-                "pct_jackpot": "🌟 JACKPOT",
-            }
-            stacked = ot_summary.melt(
-                id_vars=["item_name", "mode", "price"],
-                value_vars=["pct_bust", "pct_loss", "pct_break_even", "pct_win", "pct_jackpot"],
-                var_name="tier",
-                value_name="pct",
-            )
-            stacked["tier_label"] = stacked["tier"].map(tier_label)
-            fig = px.bar(
-                stacked,
-                x="item_name",
-                y="pct",
-                color="tier_label",
-                color_discrete_map={tier_label[k]: v for k, v in tier_color.items()},
-                title="곡괭이별 Outcome 등급 분포 (모두 합 = 1.0)",
-                labels={"item_name": "곡괭이", "pct": "비율", "tier_label": "등급"},
-                category_orders={"tier_label": ["🔴 BUST", "🟠 LOSS", "🟡 BREAK_EVEN", "🟢 WIN", "🌟 JACKPOT"]},
-            )
-            st.plotly_chart(fig)
+        # 활동량(트랜잭션 수) 큰 순으로 정렬해서 라벨 만들기.
+        users_sorted = pnl_for_picker.sort_values("tx_count", ascending=False)
+        option_to_id: dict[str, int] = {}
+        options: list[str] = []
+        for _, row in users_sorted.iterrows():
+            uid = int(row["user_id"])
+            uname = row.get("username") or "(no name)"
+            wallet = row.get("wallet_address") or ""
+            wallet_short = (wallet[:10] + "…" + wallet[-4:]) if isinstance(wallet, str) and len(wallet) > 16 else wallet
+            label = f"{wallet_short}  ·  {uname}  ·  #{uid}  ·  PNL {row['pnl']:,.0f}"
+            options.append(label)
+            option_to_id[label] = uid
 
-            st.markdown("**숫자 표** — hit_rate (어떤 보상이라도 받음 비율) + 등급별 비율")
-            st.dataframe(
-                ot_summary,
-                width="stretch",
-                column_config={
-                    "item_id": "ID",
-                    "item_name": "이름",
-                    "mode": "모드",
-                    "category": "카테고리",
-                    "price": st.column_config.NumberColumn("가격", format="%d"),
-                    "attack": st.column_config.NumberColumn("공격력", format="%.2f"),
-                    "duration_ms": st.column_config.NumberColumn("지속(ms)", format="%d"),
-                    "summons": st.column_config.NumberColumn("소환 수", format="%d"),
-                    "hit_rate": st.column_config.NumberColumn("hit rate", format="%.1%"),
-                    "pct_bust": st.column_config.NumberColumn("🔴 BUST", format="%.1%"),
-                    "pct_loss": st.column_config.NumberColumn("🟠 LOSS", format="%.1%"),
-                    "pct_break_even": st.column_config.NumberColumn("🟡 BREAK_EVEN", format="%.1%"),
-                    "pct_win": st.column_config.NumberColumn("🟢 WIN", format="%.1%"),
-                    "pct_jackpot": st.column_config.NumberColumn("🌟 JACKPOT", format="%.1%"),
-                    "pct_win_or_better": st.column_config.NumberColumn("WIN+", format="%.1%"),
-                    "expected_roi": st.column_config.NumberColumn("expected ROI", format="%.2f"),
-                },
-            )
-            st.download_button(
-                "Outcome 등급 분포 CSV",
-                data=ot_summary.to_csv(index=False).encode("utf-8-sig"),
-                file_name=_ts_filename("outcome_tiers", "csv"),
-                mime="text/csv",
-            )
-
-        st.divider()
-
-        # ----- 2) 시간 버킷별 PNL 히트맵 -----
-        st.markdown("### 2️⃣ 시간 버킷별 PNL 히트맵 — 누가 언제 흥분했나")
-        cc1, cc2, cc3 = st.columns([1, 1, 2])
+        # ----- 컨트롤: 지갑 / 시간 단위 / 기간 / 표시 방식 -----
+        cc1, cc2 = st.columns([3, 1])
         with cc1:
-            bucket_label = st.radio(
-                "버킷 크기",
-                options=["1분", "30초", "5분", "10분"],
-                index=0,
-                help="작을수록 카지노식 변동성이 잘 보임. 큰 데이터는 5분/10분 추천",
+            picked = st.multiselect(
+                "지갑 선택 (검색: 주소 / 닉네임 / user_id)",
+                options=options,
+                default=options[: min(3, len(options))],
+                help="여러 개 선택 가능. 활동량 많은 순으로 정렬됨.",
             )
         with cc2:
-            top_user_n = st.slider("표시 유저 수 (활동량 상위)", 5, 30, 15, 1)
-        with cc3:
-            highlight_jackpot = st.toggle("JACKPOT 셀 강조", value=True,
-                                          help="해당 버킷에 JACKPOT 결과가 있었으면 별표 표시")
-
-        bucket_map = {"30초": "30s", "1분": "1min", "5분": "5min", "10분": "10min"}
-        freq = bucket_map[bucket_label]
-
-        # 활동량 상위 유저 선정
-        wm_top = (
-            psr.groupby("user_id")
-            .size()
-            .sort_values(ascending=False)
-            .head(top_user_n)
-            .index.tolist()
-        )
-        grid = compute_per_minute_grid(
-            ds, user_ids=wm_top, freq=freq, exclude_system_users=exclude_system
-        )
-        if grid.empty:
-            st.info("선택한 조건에 데이터가 없습니다.")
-        else:
-            grid["label"] = grid.apply(
-                lambda r: f"#{int(r['user_id'])} {r['username'] or ''}".strip(), axis=1
-            )
-            pivot = grid.pivot_table(
-                index="label", columns="period", values="delta_pnl", aggfunc="sum"
-            ).fillna(0)
-            # 활동량 큰 순으로 위에서 아래로 정렬
-            pivot = pivot.loc[
-                pivot.abs().sum(axis=1).sort_values(ascending=False).index
-            ]
-            fig_heat = px.imshow(
-                pivot,
-                aspect="auto",
-                title=f"유저 × {bucket_label} delta_pnl (빨강=흑자, 파랑=적자)",
-                labels={"x": "기간", "y": "유저", "color": "delta_pnl"},
-                color_continuous_scale="RdBu_r",
-                color_continuous_midpoint=0,
-            )
-            st.plotly_chart(fig_heat)
-
-            if highlight_jackpot:
-                jp_pivot = grid.pivot_table(
-                    index="label", columns="period", values="any_jackpot", aggfunc="any"
-                ).fillna(False).astype(int)
-                if jp_pivot.values.sum() > 0:
-                    fig_jp = px.imshow(
-                        jp_pivot,
-                        aspect="auto",
-                        title=f"유저 × {bucket_label} JACKPOT 발생 여부 (1 = 있음)",
-                        labels={"x": "기간", "y": "유저", "color": "JACKPOT"},
-                        color_continuous_scale=[[0, "#222"], [1, "#fb0"]],
-                    )
-                    st.plotly_chart(fig_jp)
-
-            with st.expander(f"버킷 그리드 원본 ({len(grid):,} 행)"):
-                st.dataframe(grid, width="stretch")
-                st.download_button(
-                    "버킷 그리드 CSV",
-                    data=grid.to_csv(index=False).encode("utf-8-sig"),
-                    file_name=_ts_filename(f"grid_{freq}", "csv"),
-                    mime="text/csv",
-                )
-
-        st.divider()
-
-        # ----- 3) Engagement pulse (유저별 흥미도 패턴) -----
-        st.markdown("### 3️⃣ 유저별 흥미도 패턴 (Engagement Pulse)")
-        cc4, cc5 = st.columns(2)
-        with cc4:
-            drought_th = st.slider("Drought 임계 (연속 실패 N회)", 3, 20, 5, 1)
-        with cc5:
-            comeback_window = st.slider("Comeback 윈도우 (다음 N번 안에)", 1, 10, 3, 1)
-
-        ep = compute_engagement_pulse(
-            ds,
-            drought_threshold=drought_th,
-            comeback_window=comeback_window,
-            exclude_system_users=exclude_system,
-        )
-        if ep.empty:
-            st.info("Engagement pulse 데이터가 없습니다.")
-        else:
-            # 핵심 지표 카드
-            mm1, mm2, mm3, mm4 = st.columns(4)
-            with mm1:
-                st.metric("평균 WIN+ 비율", f"{ep['win_or_better_rate'].mean()*100:.1f}%",
-                          help="평균적으로 곡괭이 몇 번 사면 1번 WIN 이상이 나오는가")
-            with mm2:
-                avg_gap = ep["inter_win_gap_minutes_mean"].dropna().mean()
-                st.metric("평균 WIN 간격(분)", f"{avg_gap:.2f}" if pd.notna(avg_gap) else "—",
-                          help="WIN+ 와 다음 WIN+ 사이 평균 시간")
-            with mm3:
-                st.metric("평균 최장 drought", f"{ep['longest_drought_summons'].mean():.1f}회",
-                          help=f"연속으로 WIN+ 못 본 최장 길이의 유저별 평균")
-            with mm4:
-                cb_mean = ep["comeback_rate"].dropna().mean()
-                st.metric("평균 comeback rate", f"{cb_mean*100:.1f}%" if pd.notna(cb_mean) else "—",
-                          help=f"{drought_th}연패 후 {comeback_window}번 안에 WIN+ 한 비율")
-
-            # 분포 차트
-            cc6, cc7 = st.columns(2)
-            with cc6:
-                fig_gap = px.histogram(
-                    ep[ep["inter_win_gap_minutes_mean"].notna()],
-                    x="inter_win_gap_minutes_mean",
-                    nbins=30,
-                    title="유저별 WIN 사이 평균 간격(분) — 짧을수록 흥분이 자주 옴",
-                    labels={"inter_win_gap_minutes_mean": "WIN 평균 간격 (분)"},
-                )
-                st.plotly_chart(fig_gap)
-            with cc7:
-                fig_drought = px.histogram(
-                    ep,
-                    x="longest_drought_summons",
-                    nbins=30,
-                    title="유저별 최장 drought (연속 실패 횟수)",
-                    labels={"longest_drought_summons": "연속 non-WIN 최장"},
-                )
-                st.plotly_chart(fig_drought)
-
-            st.markdown("### 유저별 Engagement Pulse 표")
-            sort_by = st.selectbox(
-                "정렬 기준",
-                ["win_or_better_rate", "comeback_rate", "longest_drought_summons",
-                 "inter_win_gap_minutes_mean", "jackpot_count"],
+            view_mode = st.radio(
+                "표시 방식",
+                options=["개별 지갑별", "선택 지갑 합산"],
                 index=0,
-                key="ep_sort",
-            )
-            ep_view = ep.sort_values(sort_by, ascending=False).reset_index(drop=True)
-            st.dataframe(
-                ep_view,
-                width="stretch",
-                column_config={
-                    "user_id": "유저 ID",
-                    "username": "닉네임",
-                    "total_summons": st.column_config.NumberColumn("총 소환", format="%d"),
-                    "win_count": st.column_config.NumberColumn("WIN+ 수", format="%d"),
-                    "jackpot_count": st.column_config.NumberColumn("JACKPOT 수", format="%d"),
-                    "win_or_better_rate": st.column_config.NumberColumn("WIN+ 비율", format="%.1%"),
-                    "hit_rate": st.column_config.NumberColumn("hit rate", format="%.1%"),
-                    "inter_win_gap_summons_mean": st.column_config.NumberColumn("WIN 간격(소환)", format="%.1f"),
-                    "inter_win_gap_summons_median": st.column_config.NumberColumn("WIN 간격 중위(소환)", format="%.1f"),
-                    "inter_win_gap_minutes_mean": st.column_config.NumberColumn("WIN 간격(분)", format="%.2f"),
-                    "inter_win_gap_minutes_median": st.column_config.NumberColumn("WIN 간격 중위(분)", format="%.2f"),
-                    "longest_drought_summons": st.column_config.NumberColumn("최장 drought", format="%d"),
-                    "longest_drought_minutes": st.column_config.NumberColumn("drought 분", format="%.1f"),
-                    "drought_total_minutes": st.column_config.NumberColumn("총 drought 분", format="%.1f"),
-                    "drought_count": st.column_config.NumberColumn("drought 횟수", format="%d"),
-                    "comeback_rate": st.column_config.NumberColumn("comeback rate", format="%.1%"),
-                },
-            )
-            st.download_button(
-                "Engagement Pulse CSV",
-                data=ep_view.to_csv(index=False).encode("utf-8-sig"),
-                file_name=_ts_filename("engagement_pulse", "csv"),
-                mime="text/csv",
             )
 
-        st.divider()
+        cc3, cc4 = st.columns([1, 2])
+        with cc3:
+            h_freq_label = st.radio(
+                "시간 단위",
+                options=["1분", "5분", "30분", "1시간", "1일"],
+                index=3,
+            )
+        h_freq_map = {"1분": "1min", "5분": "5min", "30분": "30min", "1시간": "h", "1일": "D"}
+        h_freq = h_freq_map[h_freq_label]
 
-        # ----- 4) 진단 -----
-        st.markdown("### 🩺 밸런스 진단")
-        if not ot_summary.empty:
-            avg_jackpot = ot_summary["pct_jackpot"].mean()
-            avg_win_or_better = ot_summary["pct_win_or_better"].mean()
-            avg_hit = ot_summary["hit_rate"].mean()
-
-            diag = []
-            if avg_jackpot < 0.05:
-                diag.append(
-                    f"⚠️ JACKPOT (3x 이상) 비율 평균 **{avg_jackpot*100:.1f}%** 로 낮음. "
-                    "유저가 '큰 한방' 을 거의 못 봐서 흥분 트리거가 부족합니다. "
-                    "블록의 reward 분포 꼬리(다이아몬드 등)를 더 부풀리거나, "
-                    "낮은 등급 곡괭이일수록 jackpot 확률을 살짝 올리는 변동성 강화 권장."
-                )
+        with cc4:
+            # 사이드바 기간을 그대로 따르되, 더 좁게 자르고 싶으면 여기서 조정.
+            ts_min, ts_max = ds.transaction_date_range
+            if ts_min is None:
+                ts_min = ts_max = date.today()
+            sub_range = st.date_input(
+                "조회 기간 추가 좁히기 (선택사항)",
+                value=(ts_min, ts_max),
+                min_value=ts_min,
+                max_value=ts_max,
+                key="hourly_subrange",
+            )
+            if isinstance(sub_range, tuple) and len(sub_range) == 2:
+                h_start, h_end = sub_range
             else:
-                diag.append(f"✓ JACKPOT 비율 평균 **{avg_jackpot*100:.1f}%** — 카지노 슬롯 수준의 적절한 변동성.")
+                h_start = h_end = sub_range  # type: ignore[assignment]
 
-            if avg_hit < 0.5:
-                diag.append(
-                    f"⚠️ Hit rate (어떤 보상이라도 받음) 평균 **{avg_hit*100:.1f}%** 로 낮음. "
-                    "**절반 이상의 소환이 빈손**으로 끝난다는 뜻. "
-                    "곡괭이 duration 을 늘리거나 attack 을 살짝 buff 해서 최소 1개 블록은 항상 깨지게 만드는 게 1순위 개선."
-                )
+        if not picked:
+            st.warning("지갑을 최소 1개 이상 선택하세요.")
+        else:
+            picked_ids = [option_to_id[label] for label in picked]
+            ds_for_chart = ds.filter_by_date_range(h_start, h_end)
+            ts = compute_user_timeseries(
+                ds_for_chart,
+                user_ids=picked_ids,
+                freq=h_freq,
+                exclude_system_users=exclude_system,
+            )
+
+            if ts.empty:
+                st.info("선택한 조건에 트랜잭션이 없습니다.")
             else:
-                diag.append(f"✓ Hit rate 평균 **{avg_hit*100:.1f}%** — 대부분의 소환이 뭐라도 받습니다.")
-
-            if avg_win_or_better < 0.20:
-                diag.append(
-                    f"⚠️ WIN+ 비율 평균 **{avg_win_or_better*100:.1f}%** — 5번 사면 1번도 만족스러운 흑자가 안 나옴. "
-                    "이게 retention 깎는 가장 큰 원인. 가격 인하 또는 보상 강화 둘 중 하나 필수."
-                )
-
-            if not ep.empty:
-                cb = ep["comeback_rate"].dropna().mean()
-                if pd.notna(cb) and cb < 0.4:
-                    diag.append(
-                        f"⚠️ Comeback rate 평균 **{cb*100:.1f}%** — {drought_th}연패 후 회복 확률이 낮습니다. "
-                        "유저가 한 번 못 풀리면 '계속 못 풀린다' 는 학습이 형성되어 이탈."
+                # ----- 합산 / 개별 모드에 맞춰 데이터 정리 -----
+                if view_mode == "선택 지갑 합산":
+                    grouped = (
+                        ts.groupby("period")
+                        .agg(
+                            block_reward=("block_reward", "sum"),
+                            item_spend=("item_spend", "sum"),
+                            credit_charged=("credit_charged", "sum"),
+                            tx_count=("tx_count", "sum"),
+                            pnl=("pnl", "sum"),
+                        )
+                        .reset_index()
+                        .sort_values("period")
+                    )
+                    grouped["cum_pnl"] = grouped["pnl"].cumsum()
+                    grouped["label"] = f"합산 {len(picked_ids)}명"
+                    series = grouped
+                else:
+                    series = ts.copy()
+                    series["label"] = series.apply(
+                        lambda r: f"#{int(r['user_id'])} {r['username'] or ''}".strip(), axis=1
                     )
 
-            for d in diag:
-                if d.startswith("✓"):
-                    st.success(d)
-                else:
-                    st.warning(d)
+                # ----- KPI 카드 -----
+                total_reward = float(series["block_reward"].sum())
+                total_spend = float(series["item_spend"].sum())
+                total_pnl = total_reward - total_spend
+                total_tx = int(series["tx_count"].sum())
+                m1, m2, m3, m4 = st.columns(4)
+                with m1:
+                    st.metric("선택 지갑", f"{len(picked_ids)}개")
+                with m2:
+                    st.metric("총 블록 보상", _fmt_int(total_reward))
+                with m3:
+                    st.metric("총 아이템 지출", _fmt_int(total_spend))
+                with m4:
+                    st.metric("순 PNL", _fmt_int(total_pnl))
 
+                # ----- 누적 PNL 라인 -----
+                st.markdown("### 누적 PNL 추이")
+                fig_cum = px.line(
+                    series,
+                    x="period",
+                    y="cum_pnl",
+                    color="label",
+                    markers=True,
+                    title=f"누적 PNL — {h_freq_label} 단위",
+                    labels={"period": "기간", "cum_pnl": "누적 PNL", "label": "지갑"},
+                )
+                fig_cum.add_hline(y=0, line_dash="dot", line_color="white")
+                st.plotly_chart(fig_cum)
 
-# -------- 시간대별 PNL 탭 --------
-with tab_hourly:
-    st.subheader("시간대별 PNL")
-    st.write(
-        "`user_transaction_log.csv` 의 `created_at` 타임스탬프를 임의 시간 단위로 "
-        "집계해, **선택된 모드 / 날짜 범위 안에서 누가·언제 얼마나 벌고 잃었는지** 보여줍니다."
-    )
-
-    cc = st.columns([1, 1, 1, 2])
-    with cc[0]:
-        h_freq_label = st.radio(
-            "시간 단위",
-            options=["1시간", "30분", "10분", "1일"],
-            index=0,
-            horizontal=False,
-            help="1시간 단위가 기본. 데이터가 짧으면 10분/30분, 길면 1일.",
-        )
-    with cc[1]:
-        h_metric = st.radio(
-            "지표",
-            options=["PNL", "블록 보상", "아이템 지출", "트랜잭션 수"],
-            index=0,
-        )
-    with cc[2]:
-        h_view = st.radio(
-            "보는 방식",
-            options=["전체 합산", "유저별"],
-            index=0,
-            help=(
-                "전체 합산: 모든 유저를 더한 한 줄.\n"
-                "유저별: 상위 N명을 별도 라인 + 히트맵."
-            ),
-        )
-    with cc[3]:
-        top_n = st.slider(
-            "유저별 모드일 때 상위 몇 명",
-            min_value=3,
-            max_value=30,
-            value=10,
-            step=1,
-            disabled=(h_view == "전체 합산"),
-        )
-
-    h_freq_map = {"1시간": "h", "30분": "30min", "10분": "10min", "1일": "D"}
-    h_freq = h_freq_map[h_freq_label]
-
-    h_metric_map = {
-        "PNL": "pnl",
-        "블록 보상": "block_reward",
-        "아이템 지출": "item_spend",
-        "트랜잭션 수": "tx_count",
-    }
-    h_metric_col = h_metric_map[h_metric]
-
-    # 전체 PNL 추이를 보려면 유저 미선택(None) 으로 호출. quest는 항상 제외, system 토글 따름.
-    ts_all = compute_user_timeseries(
-        ds, user_ids=None, freq=h_freq, exclude_system_users=exclude_system
-    )
-
-    if ts_all.empty:
-        st.info("해당 조건에 트랜잭션이 없습니다.")
-    else:
-        # ----- 1) 전체 합산 시계열 -----
-        agg = (
-            ts_all.groupby("period")
-            .agg(
-                pnl=("pnl", "sum"),
-                block_reward=("block_reward", "sum"),
-                item_spend=("item_spend", "sum"),
-                tx_count=("tx_count", "sum"),
-                active_users=("user_id", lambda s: int((ts_all.loc[s.index, "tx_count"] > 0).sum())),
-            )
-            .reset_index()
-        )
-        agg["cum_pnl"] = agg["pnl"].cumsum()
-
-        m1, m2, m3, m4 = st.columns(4)
-        with m1:
-            st.metric("기간", f"{agg['period'].min().strftime('%m/%d %H:%M')} ~ {agg['period'].max().strftime('%m/%d %H:%M')}")
-        with m2:
-            st.metric("총 블록 보상", _fmt_int(agg["block_reward"].sum()))
-        with m3:
-            st.metric("총 아이템 지출", _fmt_int(agg["item_spend"].sum()))
-        with m4:
-            st.metric("순 PNL", _fmt_int(agg["pnl"].sum()))
-
-        # 누적 PNL 추이는 한 모드 안에서 시간이 흐를수록 어떤 방향으로 가는지 한눈에.
-        st.markdown("### 누적 PNL 추이 (전체 유저 합산)")
-        fig_cum = px.line(
-            agg,
-            x="period",
-            y="cum_pnl",
-            markers=True,
-            title=f"누적 PNL — {h_freq_label} 단위",
-            labels={"period": "기간", "cum_pnl": "누적 PNL"},
-        )
-        fig_cum.add_hline(y=0, line_dash="dot", line_color="white")
-        st.plotly_chart(fig_cum)
-
-        # 전체 합산 모드일 때는 단일 막대 그래프, 유저별 모드면 stacked + heatmap.
-        if h_view == "전체 합산":
-            st.markdown(f"### {h_freq_label}별 {h_metric}")
-            fig_bar = px.bar(
-                agg,
-                x="period",
-                y=h_metric_col,
-                title=f"{h_freq_label}별 {h_metric}",
-                labels={"period": "기간", h_metric_col: h_metric},
-            )
-            if h_metric == "PNL":
+                # ----- 기간별 PNL 바 -----
+                st.markdown("### 기간별 PNL (양수=흑자, 음수=적자)")
+                fig_bar = px.bar(
+                    series,
+                    x="period",
+                    y="pnl",
+                    color="label",
+                    barmode="group",
+                    title=f"기간별 PNL — {h_freq_label}",
+                    labels={"period": "기간", "pnl": "PNL", "label": "지갑"},
+                )
                 fig_bar.add_hline(y=0, line_color="white")
-            st.plotly_chart(fig_bar)
+                st.plotly_chart(fig_bar)
 
-            # 활성 유저 수 추이.
-            active = (
-                ts_all[ts_all["tx_count"] > 0]
-                .groupby("period")["user_id"]
-                .nunique()
-                .reset_index(name="active_users")
-            )
-            fig_active = px.line(
-                active,
-                x="period",
-                y="active_users",
-                markers=True,
-                title=f"{h_freq_label}별 활성 유저 수",
-                labels={"period": "기간", "active_users": "활성 유저 수"},
-            )
-            st.plotly_chart(fig_active)
+                # ----- 보상 vs 지출 -----
+                st.markdown("### 보상 / 지출 분리")
+                cc5, cc6 = st.columns(2)
+                with cc5:
+                    fig_rw = px.bar(
+                        series, x="period", y="block_reward", color="label",
+                        barmode="group",
+                        title=f"블록 보상 — {h_freq_label}",
+                        labels={"period": "기간", "block_reward": "블록 보상", "label": "지갑"},
+                    )
+                    st.plotly_chart(fig_rw)
+                with cc6:
+                    fig_sp = px.bar(
+                        series, x="period", y="item_spend", color="label",
+                        barmode="group",
+                        title=f"아이템 지출 — {h_freq_label}",
+                        labels={"period": "기간", "item_spend": "아이템 지출", "label": "지갑"},
+                    )
+                    st.plotly_chart(fig_sp)
 
-        else:
-            # ----- 2) 상위 N 유저별 라인 차트 + 히트맵 -----
-            user_totals = (
-                ts_all.groupby("user_id")[h_metric_col].sum().sort_values(ascending=False)
-            )
-            top_users = user_totals.head(top_n).index.tolist()
-            sub = ts_all[ts_all["user_id"].isin(top_users)].copy()
-            sub["label"] = sub.apply(
-                lambda r: f"#{int(r['user_id'])} {r['username'] or ''}".strip(), axis=1
-            )
-
-            st.markdown(f"### 상위 {top_n}명 {h_freq_label}별 {h_metric}")
-            fig_topn = px.bar(
-                sub,
-                x="period",
-                y=h_metric_col,
-                color="label",
-                title=f"상위 {top_n}명 {h_freq_label}별 {h_metric} (적층)",
-                labels={"period": "기간", h_metric_col: h_metric, "label": "유저"},
-            )
-            if h_metric == "PNL":
-                fig_topn.add_hline(y=0, line_color="white")
-            st.plotly_chart(fig_topn)
-
-            # 유저 × 시간 히트맵 — 누가 언제 활동했는지 한눈에.
-            st.markdown(f"### 유저 × 시간 히트맵 — {h_metric}")
-            pivot = sub.pivot_table(
-                index="label", columns="period", values=h_metric_col, aggfunc="sum"
-            ).fillna(0)
-            # 합계 큰 순으로 정렬 (상위 → 하위)
-            pivot = pivot.loc[
-                pivot.sum(axis=1).sort_values(ascending=False).index
-            ]
-            color_scale = "RdBu" if h_metric == "PNL" else "Viridis"
-            color_args = (
-                {"color_continuous_midpoint": 0} if h_metric == "PNL" else {}
-            )
-            fig_heat = px.imshow(
-                pivot,
-                aspect="auto",
-                title=f"히트맵 — {h_metric}, {h_freq_label} 단위",
-                labels={"x": "기간", "y": "유저", "color": h_metric},
-                color_continuous_scale=color_scale,
-                **color_args,
-            )
-            st.plotly_chart(fig_heat)
-
-        st.markdown("### 시계열 원본")
-        st.dataframe(agg, width="stretch")
-        st.download_button(
-            "시간대별 합산 CSV 다운로드",
-            data=agg.to_csv(index=False).encode("utf-8-sig"),
-            file_name=_ts_filename(f"hourly_{h_freq}_{selected_game_mode}", "csv"),
-            mime="text/csv",
-        )
+                # ----- 원본 표 -----
+                with st.expander("시계열 원본"):
+                    st.dataframe(ts, width="stretch")
+                    st.download_button(
+                        "시계열 CSV 다운로드",
+                        data=ts.to_csv(index=False).encode("utf-8-sig"),
+                        file_name=_ts_filename(
+                            f"timeseries_{h_freq}_{'_'.join(map(str, picked_ids))}", "csv"
+                        ),
+                        mime="text/csv",
+                    )
 
 
 # -------- 유저 상세 / 그룹 분석 탭 --------
@@ -1660,316 +1454,6 @@ with tab_blocks:
         file_name=_ts_filename("block_recommendations", "csv"),
         mime="text/csv",
     )
-
-
-# -------- 시뮬레이터 탭 --------
-with tab_sim:
-    st.subheader("What-if 밸런스 시뮬레이터")
-    st.write(
-        "가격 / 공격력 / 지속시간 / 블록 HP / 보상 / 드롭률을 자유롭게 조정하면, "
-        "변경된 값으로 다시 계산한 **이론 ROI** 가 즉시 갱신됩니다. "
-        "원본 데이터는 건드리지 않으니 안전하게 실험하세요."
-    )
-
-    items = ds.items.copy()
-    blocks = ds.blocks.copy()
-
-    with st.expander("곡괭이 / TNT 오버라이드", expanded=True):
-        item_overrides: dict[int, dict[str, float]] = {}
-        for _, row in items.sort_values(["mode", "item_id"]).iterrows():
-            label = f"#{int(row['item_id'])} {row['name']} ({row['mode']})"
-            cc = st.columns(4)
-            with cc[0]:
-                st.write(f"**{label}**")
-            with cc[1]:
-                new_price = st.number_input(
-                    "가격",
-                    min_value=0.0,
-                    value=float(row["price"]) if pd.notna(row["price"]) else 0.0,
-                    step=100.0,
-                    key=f"price_{row['item_id']}",
-                )
-            with cc[2]:
-                new_attack = st.number_input(
-                    "공격력",
-                    min_value=0.0,
-                    value=float(row["attack"]) if pd.notna(row["attack"]) else 0.0,
-                    step=1.0,
-                    key=f"attack_{row['item_id']}",
-                )
-            with cc[3]:
-                new_duration = st.number_input(
-                    "지속(ms)",
-                    min_value=0.0,
-                    value=float(row["duration_ms"]) if pd.notna(row["duration_ms"]) else 0.0,
-                    step=500.0,
-                    key=f"duration_{row['item_id']}",
-                )
-            if (
-                new_price != row["price"]
-                or new_attack != row["attack"]
-                or new_duration != row["duration_ms"]
-            ):
-                item_overrides[int(row["item_id"])] = {
-                    "price": new_price,
-                    "attack": new_attack,
-                    "duration_ms": new_duration,
-                }
-
-    with st.expander("블록 오버라이드"):
-        block_overrides: dict[int, dict[str, float]] = {}
-        for _, row in blocks.sort_values(["mode", "block_id"]).iterrows():
-            label = f"#{int(row['block_id'])} {row['name']} ({row['mode']})"
-            cc = st.columns(4)
-            with cc[0]:
-                st.write(f"**{label}**")
-            with cc[1]:
-                new_hp = st.number_input(
-                    "HP",
-                    min_value=0.0,
-                    value=float(row["hp"]) if pd.notna(row["hp"]) else 0.0,
-                    step=10.0,
-                    key=f"hp_{row['block_id']}",
-                )
-            with cc[2]:
-                new_reward = st.number_input(
-                    "보상",
-                    min_value=0.0,
-                    value=float(row["reward"]) if pd.notna(row["reward"]) else 0.0,
-                    step=10.0,
-                    key=f"reward_{row['block_id']}",
-                )
-            with cc[3]:
-                new_drop = st.number_input(
-                    "드롭률",
-                    min_value=0.0,
-                    max_value=1.0,
-                    value=float(row["drop_rate"]) if pd.notna(row["drop_rate"]) else 0.0,
-                    step=0.005,
-                    format="%.4f",
-                    key=f"drop_{row['block_id']}",
-                )
-            if (
-                new_hp != row["hp"]
-                or new_reward != row["reward"]
-                or new_drop != row["drop_rate"]
-            ):
-                block_overrides[int(row["block_id"])] = {
-                    "hp": new_hp,
-                    "reward": new_reward,
-                    "drop_rate": new_drop,
-                }
-
-    tweak = BalanceTweak(item_overrides=item_overrides, block_overrides=block_overrides)
-    sim = simulate_balance(ds, tweak)
-
-    st.markdown("### 변경 전 / 후 이론 ROI")
-    if not sim.empty:
-        x_min = float(sim["baseline_roi"].dropna().min() or 0)
-        x_max = float(sim["baseline_roi"].dropna().max() or 0)
-        size_basis = np.where(sim["price"] > 0, np.log10(np.maximum(sim["price"], 1)) + 1, 1)
-        fig = px.scatter(
-            sim,
-            x="baseline_roi",
-            y="theoretical_roi",
-            color="mode",
-            symbol="category",
-            size=size_basis,
-            hover_name="name",
-            title="ROI: 변경 전(x) vs 시뮬레이션(y) — 대각선 위 = 강해짐",
-            labels={
-                "baseline_roi": "변경 전 ROI",
-                "theoretical_roi": "시뮬 ROI",
-                "mode": "모드",
-                "category": "카테고리",
-            },
-        )
-        if x_max > x_min:
-            fig.add_shape(
-                type="line",
-                x0=x_min,
-                x1=x_max,
-                y0=x_min,
-                y1=x_max,
-                line=dict(color="white", dash="dot"),
-            )
-        st.plotly_chart(fig)
-
-    st.dataframe(
-        sim,
-        width="stretch",
-        column_config={
-            "item_id": "ID",
-            "name": "이름",
-            "category": "카테고리",
-            "mode": "모드",
-            "baseline_price": st.column_config.NumberColumn("변경 전 가격", format="%d"),
-            "price": st.column_config.NumberColumn("시뮬 가격", format="%d"),
-            "attack": st.column_config.NumberColumn("공격력", format="%.2f"),
-            "duration_ms": st.column_config.NumberColumn("지속(ms)", format="%d"),
-            "baseline_reward_per_use": st.column_config.NumberColumn("변경 전 회당 보상", format="%.0f"),
-            "theoretical_reward_per_use": st.column_config.NumberColumn("시뮬 회당 보상", format="%.0f"),
-            "baseline_roi": st.column_config.NumberColumn("변경 전 ROI", format="%.2f"),
-            "theoretical_roi": st.column_config.NumberColumn("시뮬 ROI", format="%.2f"),
-            "roi_delta": st.column_config.NumberColumn("ROI 차이", format="%+.2f"),
-        },
-    )
-
-    if item_overrides or block_overrides:
-        st.success(
-            f"오버라이드 적용 — 아이템 {len(item_overrides)}개, "
-            f"블록 {len(block_overrides)}개"
-        )
-        # 시뮬레이터에서 직접 편집한 결과를 게임 포맷 CSV 로 다운로드.
-        sim_items = items.copy()
-        for iid, over in item_overrides.items():
-            mask = sim_items["item_id"] == iid
-            for k, v in over.items():
-                sim_items.loc[mask, k] = v
-        sim_blocks = blocks.copy()
-        for bid, over in block_overrides.items():
-            mask = sim_blocks["block_id"] == bid
-            for k, v in over.items():
-                sim_blocks.loc[mask, k] = v
-
-        d1, d2 = st.columns(2)
-        with d1:
-            st.download_button(
-                "🧪 시뮬 적용 item.csv 다운로드 (게임 포맷)",
-                data=simulator_overrides_csv(sim_items, "items"),
-                file_name=_ts_filename("simulated_items", "csv"),
-                mime="text/csv",
-            )
-        with d2:
-            st.download_button(
-                "🧪 시뮬 적용 block.csv 다운로드 (게임 포맷)",
-                data=simulator_overrides_csv(sim_blocks, "blocks"),
-                file_name=_ts_filename("simulated_blocks", "csv"),
-                mime="text/csv",
-            )
-
-
-# -------- 밸런스 적용 (Export) 탭 --------
-with tab_export:
-    st.subheader("밸런스 적용 — 게임에 그대로 넣을 수 있는 형식으로 다운로드")
-    st.write(
-        "현재 데이터에서 산출된 추천값을 **게임이 사용하는 CSV 포맷** "
-        "(헤더 없이 같은 컬럼 순서) 또는 **JSON 변경 명세**로 내보낼 수 있습니다. "
-        "운영 파이프라인에 그대로 투입 가능한 형태입니다."
-    )
-
-    e1, e2 = st.columns(2)
-    with e1:
-        target_roi_export = st.slider(
-            "추천 가격 산출용 목표 ROI",
-            min_value=-0.3,
-            max_value=1.0,
-            value=0.20,
-            step=0.05,
-            key="export_roi",
-        )
-    with e2:
-        drop_tol_export = st.slider(
-            "블록 드롭률 허용 편차",
-            min_value=0.005,
-            max_value=0.05,
-            value=0.015,
-            step=0.005,
-            key="export_tol",
-        )
-
-    notes = st.text_area(
-        "운영 메모 (JSON에 함께 기록됩니다)",
-        value="",
-        height=70,
-        placeholder="예: 2026-05-06 베타 4일차 데이터 기준, NORMAL 곡괭이 가격 인하 적용",
-    )
-
-    items_csv = items_csv_with_recommendations(
-        ds, target_roi=target_roi_export, exclude_system_users=exclude_system
-    )
-    blocks_csv = blocks_csv_with_recommendations(
-        ds, drop_tolerance=drop_tol_export, exclude_system_users=exclude_system
-    )
-    cfg_json = balance_config_json(
-        ds,
-        target_roi=target_roi_export,
-        drop_tolerance=drop_tol_export,
-        exclude_system_users=exclude_system,
-        notes=notes or None,
-    )
-
-    d1, d2, d3 = st.columns(3)
-    with d1:
-        st.download_button(
-            "📥 추천 적용 item.csv (게임 포맷)",
-            data=items_csv,
-            file_name=_ts_filename("item_balanced", "csv"),
-            mime="text/csv",
-            help="`item.csv` 와 동일한 헤더 없는 12-컬럼 포맷으로, 가격만 추천값으로 갈아치운 파일.",
-        )
-    with d2:
-        st.download_button(
-            "📥 추천 적용 block.csv (게임 포맷)",
-            data=blocks_csv,
-            file_name=_ts_filename("block_balanced", "csv"),
-            mime="text/csv",
-            help="`block.csv` 와 동일한 포맷으로, 보상 컬럼만 추천값으로 갈아치운 파일.",
-        )
-    with d3:
-        st.download_button(
-            "📥 변경 명세 JSON",
-            data=cfg_json,
-            file_name=_ts_filename("balance_changes", "json"),
-            mime="application/json",
-            help="현재값 → 추천값 + 사유 + 메트릭이 정리된 JSON 명세.",
-        )
-
-    st.markdown("### 변경 명세 미리보기")
-    st.code(cfg_json[:4000] + ("\n…" if len(cfg_json) > 4000 else ""), language="json")
-
-    st.markdown("### 추천 가격으로 갈아치운 item.csv 미리보기")
-    st.code("\n".join(items_csv.splitlines()[:25]), language="csv")
-
-    st.markdown("### 추천 보상으로 갈아치운 block.csv 미리보기")
-    st.code("\n".join(blocks_csv.splitlines()[:25]), language="csv")
-
-    if not PUBLIC_MODE:
-        st.markdown("---")
-        st.markdown("### 분석 산출물 다운로드 (raw)")
-        st.write("외부 시스템에서 끌어쓰기 좋은 일반 CSV 산출물입니다.")
-
-        full_pnl_csv = compute_user_pnl(ds, exclude_system_users=exclude_system).to_csv(index=False).encode("utf-8-sig")
-        full_item_economy_csv = compute_item_economy(ds, exclude_system_users=exclude_system).to_csv(index=False).encode("utf-8-sig")
-        full_block_economy_csv = compute_block_economy(ds, exclude_system_users=exclude_system).to_csv(index=False).encode("utf-8-sig")
-
-        e1, e2, e3 = st.columns(3)
-        with e1:
-            st.download_button(
-                "📊 user_pnl.csv",
-                data=full_pnl_csv,
-                file_name=_ts_filename("user_pnl_full", "csv"),
-                mime="text/csv",
-            )
-        with e2:
-            st.download_button(
-                "📊 item_economy.csv",
-                data=full_item_economy_csv,
-                file_name=_ts_filename("item_economy_full", "csv"),
-                mime="text/csv",
-            )
-        with e3:
-            st.download_button(
-                "📊 block_economy.csv",
-                data=full_block_economy_csv,
-                file_name=_ts_filename("block_economy_full", "csv"),
-                mime="text/csv",
-            )
-    else:
-        st.info(
-            "🔒 공개 배포 모드 — raw 산출물 다운로드는 비활성화되어 있습니다. "
-            "추천값/시뮬 결과의 게임 포맷 다운로드는 위에서 받을 수 있습니다."
-        )
 
 
 # -------- 원본 데이터 탭 (PUBLIC_MODE 에서는 비활성화) --------
