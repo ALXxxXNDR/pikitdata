@@ -14,9 +14,20 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-# 공개 배포 모드 — 환경변수 `PIKIT_PUBLIC=1` 이면 원본 데이터 탭과
-# raw CSV 다운로드 버튼을 모두 숨겨, 익명 방문자가 트랜잭션 로그
-# 같은 민감 데이터를 직접 받지 못하도록 합니다.
+# Streamlit Cloud는 secrets.toml 을 `st.secrets` 로 노출하지만, 우리 코드
+# (특히 pikit_analyzer.data_loader 의 import 시점)는 `os.environ` 으로 읽기
+# 때문에, pikit_analyzer import *전에* 한 번 브리지해 둡니다.
+try:
+    for _k in list(getattr(st, "secrets", {})):
+        _v = st.secrets[_k]
+        if isinstance(_v, (str, int, float, bool)) and _k not in os.environ:
+            os.environ[_k] = str(_v)
+except Exception:
+    # 로컬 실행 등 secrets 가 없을 때 조용히 무시.
+    pass
+
+# 공개 배포 모드 — `PIKIT_PUBLIC=1` 이면 원본 데이터 탭과 raw CSV
+# 다운로드 버튼을 숨겨 익명 방문자가 트랜잭션 로그를 직접 받지 못하게.
 PUBLIC_MODE = os.environ.get("PIKIT_PUBLIC", "").lower() in ("1", "true", "yes", "on")
 
 from pikit_analyzer import (
