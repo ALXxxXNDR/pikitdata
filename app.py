@@ -113,7 +113,23 @@ def _apply_mode_filter(dataset, mode):
     return dataset.filter_by_game_mode(mode)
 snapshots = list_snapshot_dates(Path(data_root))
 if not snapshots:
+    # Cloud 환경에서 경로가 안 잡힐 때 진단을 도와줄 정보들을 함께 표시.
     st.sidebar.error(f"`{data_root}` 에서 스냅샷을 찾지 못했습니다.")
+    with st.sidebar.expander("진단 정보"):
+        resolved = Path(data_root).expanduser()
+        if not resolved.is_absolute():
+            resolved = (Path(__file__).resolve().parent / resolved).resolve()
+        st.write("CWD:", os.getcwd())
+        st.write("data_root (입력):", data_root)
+        st.write("data_root (해석):", str(resolved))
+        st.write("data_root 존재:", resolved.exists())
+        st.write("PIKIT_DATA_ROOT env:", os.environ.get("PIKIT_DATA_ROOT", "(미설정)"))
+        st.write("PIKIT_PUBLIC env:", os.environ.get("PIKIT_PUBLIC", "(미설정)"))
+        if resolved.exists():
+            try:
+                st.write("data_root 내용:", [p.name for p in resolved.iterdir()][:20])
+            except Exception as e:
+                st.write("listdir 실패:", str(e))
     st.stop()
 
 # 가장 최근 스냅샷에는 누적 트랜잭션 로그가 모두 들어 있어, 임의 기간 슬라이스가 가능합니다.

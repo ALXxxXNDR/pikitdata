@@ -26,14 +26,19 @@ def _resolve_default_data_root() -> Path:
         2. `./data` next to the repo root (in-repo private folder)
         3. Local laptop fallback
     """
+    repo_root = Path(__file__).resolve().parent.parent
     env = os.environ.get("PIKIT_DATA_ROOT", "").strip()
     if env:
-        return Path(env).expanduser()
-    repo_data = Path(__file__).resolve().parent.parent / "data"
+        p = Path(env).expanduser()
+        # `./data`, `data/`, `data` 같은 상대 경로는 CWD 가 아니라 repo 루트
+        # 기준으로 해석 — Streamlit Cloud에선 CWD 가 항상 repo 루트는 아니라서.
+        if not p.is_absolute():
+            p = (repo_root / p).resolve()
+        return p
+    repo_data = repo_root / "data"
     if repo_data.exists():
         return repo_data
     # 마지막 대안: 사용자 홈 디렉터리 아래 'Downloads/PIKIT BETA DATA'.
-    # 어떤 사용자가 받아도 동작하도록 절대 경로 대신 Path.home() 사용.
     return Path.home() / "Downloads" / "PIKIT BETA DATA"
 
 
