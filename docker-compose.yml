@@ -1,0 +1,47 @@
+# PIKIT 밸런스 대시보드 — Synology DS720+ Container Manager 용 Compose
+#
+# 사용법:
+#   1) 이 yaml 을 프로젝트 폴더에 두고 (NAS 의 /volume1/docker/pikit/)
+#   2) DSM → Container Manager → 프로젝트 → 만들기 → 이 폴더 선택
+#   3) 자동으로 빌드 + 실행
+#
+# 또는 SSH 로:
+#   cd /volume1/docker/pikit && sudo docker compose up -d --build
+
+version: "3.8"
+
+services:
+  pikit:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pikit-balance:latest
+    container_name: pikit-balance
+
+    ports:
+      # 호스트:컨테이너 — DS720+ 의 8501 이 다른 서비스와 충돌하면 8580 등으로 변경.
+      - "8501:8501"
+
+    volumes:
+      # 데이터 폴더 — NAS 에서 직접 파일 추가하면 즉시 반영.
+      # 처음에 /volume1/docker/pikit/data/2026.05.06/ 같은 폴더 만들어 두면 됨.
+      - ./data:/app/data:ro
+
+    environment:
+      # 공개 모드 — 사이드바에서 데이터 경로 입력칸 숨김 + raw CSV 다운로드 비활성화.
+      - PIKIT_PUBLIC=1
+      - PIKIT_DATA_ROOT=/app/data
+
+    restart: unless-stopped
+
+    # Synology 가 NAS 부팅 시 자동 시작.
+    labels:
+      - "com.docker.compose.synology-autostart=true"
+
+    # 자원 제한 (선택) — DS720+ 가 6GB 까지 확장 가능. 분석 도구라 2GB 면 충분.
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
