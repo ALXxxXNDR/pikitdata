@@ -622,6 +622,18 @@ def load_snapshot(snapshot_date: str, data_root: str | None = None) -> PikitData
         ["tx_id", "user_id", "game_id", "amount", "balance_before", "balance_after", "source_id"],
     )
     transactions = _to_datetime(transactions, ["created_at"])
+    # 메모리 절감 — Streamlit Cloud 1GB 한도 대응. 60만+ 행에서 가장 큰 효과:
+    # int64 → int32 다운캐스트 (사용자/게임/소스 ID는 작은 정수).
+    for col, dtype in (
+        ("user_id", "Int32"),
+        ("game_id", "Int32"),
+        ("source_id", "Int32"),
+    ):
+        if col in transactions.columns:
+            try:
+                transactions[col] = transactions[col].astype(dtype)
+            except (TypeError, ValueError):
+                pass
     if "created_at" in transactions.columns:
         transactions["snapshot_day"] = transactions["created_at"].dt.date
 
