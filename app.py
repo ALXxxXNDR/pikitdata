@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 # Streamlit Cloud는 secrets.toml 을 `st.secrets` 로 노출하지만, 우리 코드
@@ -1390,16 +1391,18 @@ with tab_hourly:
                         with m4:
                             st.metric("순 PNL", _fmt_int(total_pnl))
 
-                    fig_cum = px.line(
-                        series, x="period", y="cum_pnl", color="label",
-                        markers=False,
+                    # 누적 PNL — go.Scattergl (WebGL) 로 직접 빌드. SVG 대비 빠름.
+                    fig_cum = go.Figure()
+                    for label, grp in series.groupby("label"):
+                        fig_cum.add_trace(go.Scattergl(
+                            x=grp["period"], y=grp["cum_pnl"],
+                            mode="lines", name=str(label),
+                        ))
+                    fig_cum.update_layout(
                         title=f"누적 PNL — {h_freq_label} 단위",
-                        labels={"period": "기간", "cum_pnl": "누적 PNL", "label": "지갑"},
+                        xaxis_title="기간", yaxis_title="누적 PNL",
+                        legend_title="지갑",
                     )
-                    # WebGL 트레이스 변환 — 점 5만개 넘어도 부드럽게 렌더.
-                    fig_cum.update_traces(mode="lines")
-                    for trace in fig_cum.data:
-                        trace.type = "scattergl"
                     fig_cum.add_hline(y=0, line_dash="dot", line_color="white")
                     with results_placeholder:
                         st.markdown("### 누적 PNL 추이")
