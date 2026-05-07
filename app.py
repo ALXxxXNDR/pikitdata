@@ -308,14 +308,15 @@ elif mode == "단일 날짜":
         min_value=min_date,
         max_value=max_date,
     )
+    st.sidebar.caption("⏰ 시각 범위 (그 날 안에서)")
     sb_t1, sb_t2 = st.sidebar.columns(2)
     with sb_t1:
         chosen_start_t = st.time_input(
-            "시작 시각", value=time(0, 0), step=60, key="sb_single_start_t",
+            "부터", value=time(0, 0), step=60, key="sb_single_start_t",
         )
     with sb_t2:
         chosen_end_t = st.time_input(
-            "종료 시각", value=time(23, 59), step=60, key="sb_single_end_t",
+            "까지", value=time(23, 59), step=60, key="sb_single_end_t",
         )
     chosen_start_dt = datetime.combine(chosen, chosen_start_t)
     chosen_end_dt = datetime.combine(chosen, chosen_end_t)
@@ -329,31 +330,51 @@ elif mode == "단일 날짜":
         f"(스냅샷 {latest_choice} 기준)"
     )
 
-else:  # 날짜 범위
+else:  # 날짜 범위 — 시작 [날짜+시각] ~ 종료 [날짜+시각]
     default_start = max_date - timedelta(days=2) if max_date else min_date
     if default_start < min_date:
         default_start = min_date
-    chosen_range = st.sidebar.date_input(
-        "조회 기간",
-        value=(default_start, max_date),
-        min_value=min_date,
-        max_value=max_date,
-    )
-    if isinstance(chosen_range, tuple) and len(chosen_range) == 2:
-        start_d, end_d = chosen_range
-    else:
-        start_d = end_d = chosen_range  # type: ignore[assignment]
-    sb_r1, sb_r2 = st.sidebar.columns(2)
-    with sb_r1:
+
+    st.sidebar.markdown("**📅 조회 시작**")
+    sb_s1, sb_s2 = st.sidebar.columns([3, 2])
+    with sb_s1:
+        start_d = st.date_input(
+            "날짜", value=default_start,
+            min_value=min_date, max_value=max_date,
+            key="sb_range_start_d", label_visibility="collapsed",
+        )
+    with sb_s2:
         range_start_t = st.time_input(
-            "시작 시각", value=time(0, 0), step=60, key="sb_range_start_t",
+            "시각", value=time(0, 0), step=60,
+            key="sb_range_start_t", label_visibility="collapsed",
         )
-    with sb_r2:
+
+    st.sidebar.markdown("**📅 조회 종료**")
+    sb_e1, sb_e2 = st.sidebar.columns([3, 2])
+    with sb_e1:
+        end_d = st.date_input(
+            "날짜", value=max_date,
+            min_value=min_date, max_value=max_date,
+            key="sb_range_end_d", label_visibility="collapsed",
+        )
+    with sb_e2:
         range_end_t = st.time_input(
-            "종료 시각", value=time(23, 59), step=60, key="sb_range_end_t",
+            "시각", value=time(23, 59), step=60,
+            key="sb_range_end_t", label_visibility="collapsed",
         )
+
     range_start_dt = datetime.combine(start_d, range_start_t)
     range_end_dt = datetime.combine(end_d, range_end_t)
+
+    # 검증 — 종료 < 시작 이면 사이드바에 경고. (필터는 그래도 시도)
+    if range_end_dt < range_start_dt:
+        st.sidebar.warning("⚠️ 종료 시각이 시작 시각보다 빠릅니다.")
+
+    st.sidebar.caption(
+        f"→ {start_d} {range_start_t.strftime('%H:%M')} ~ "
+        f"{end_d} {range_end_t.strftime('%H:%M')}"
+    )
+
     with st.spinner(
         f"⏳ {start_d} {range_start_t.strftime('%H:%M')} ~ "
         f"{end_d} {range_end_t.strftime('%H:%M')} 슬라이스 중…"
