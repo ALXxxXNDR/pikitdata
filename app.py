@@ -308,11 +308,26 @@ elif mode == "단일 날짜":
         min_value=min_date,
         max_value=max_date,
     )
-    with st.spinner(f"⏳ {chosen} 하루치 데이터 슬라이스 중…"):
+    sb_t1, sb_t2 = st.sidebar.columns(2)
+    with sb_t1:
+        chosen_start_t = st.time_input(
+            "시작 시각", value=time(0, 0), step=60, key="sb_single_start_t",
+        )
+    with sb_t2:
+        chosen_end_t = st.time_input(
+            "종료 시각", value=time(23, 59), step=60, key="sb_single_end_t",
+        )
+    chosen_start_dt = datetime.combine(chosen, chosen_start_t)
+    chosen_end_dt = datetime.combine(chosen, chosen_end_t)
+    with st.spinner(f"⏳ {chosen} {chosen_start_t.strftime('%H:%M')}~{chosen_end_t.strftime('%H:%M')} 슬라이스 중…"):
         base_ds = latest_ds
-        ds = base_ds.filter_by_date_range(chosen, chosen)
-    ds_start_iso = ds_end_iso = chosen.isoformat()
-    filter_caption = f"**{chosen}** 하루치 (스냅샷 {latest_choice} 기준)"
+        ds = base_ds.filter_by_date_range(chosen_start_dt, chosen_end_dt)
+    ds_start_iso = chosen_start_dt.isoformat()
+    ds_end_iso = chosen_end_dt.isoformat()
+    filter_caption = (
+        f"**{chosen}** {chosen_start_t.strftime('%H:%M')}~{chosen_end_t.strftime('%H:%M')} "
+        f"(스냅샷 {latest_choice} 기준)"
+    )
 
 else:  # 날짜 범위
     default_start = max_date - timedelta(days=2) if max_date else min_date
@@ -328,12 +343,30 @@ else:  # 날짜 범위
         start_d, end_d = chosen_range
     else:
         start_d = end_d = chosen_range  # type: ignore[assignment]
-    with st.spinner(f"⏳ {start_d} ~ {end_d} 데이터 슬라이스 중…"):
+    sb_r1, sb_r2 = st.sidebar.columns(2)
+    with sb_r1:
+        range_start_t = st.time_input(
+            "시작 시각", value=time(0, 0), step=60, key="sb_range_start_t",
+        )
+    with sb_r2:
+        range_end_t = st.time_input(
+            "종료 시각", value=time(23, 59), step=60, key="sb_range_end_t",
+        )
+    range_start_dt = datetime.combine(start_d, range_start_t)
+    range_end_dt = datetime.combine(end_d, range_end_t)
+    with st.spinner(
+        f"⏳ {start_d} {range_start_t.strftime('%H:%M')} ~ "
+        f"{end_d} {range_end_t.strftime('%H:%M')} 슬라이스 중…"
+    ):
         base_ds = latest_ds
-        ds = base_ds.filter_by_date_range(start_d, end_d)
-    ds_start_iso = start_d.isoformat()
-    ds_end_iso = end_d.isoformat()
-    filter_caption = f"**{start_d} ~ {end_d}** (스냅샷 {latest_choice} 기준)"
+        ds = base_ds.filter_by_date_range(range_start_dt, range_end_dt)
+    ds_start_iso = range_start_dt.isoformat()
+    ds_end_iso = range_end_dt.isoformat()
+    filter_caption = (
+        f"**{start_d} {range_start_t.strftime('%H:%M')} ~ "
+        f"{end_d} {range_end_t.strftime('%H:%M')}** "
+        f"(스냅샷 {latest_choice} 기준)"
+    )
 
 st.sidebar.markdown("### 계정 필터")
 
