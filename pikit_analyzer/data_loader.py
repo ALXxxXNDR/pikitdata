@@ -676,15 +676,23 @@ def list_environments(data_root: Path = DEFAULT_DATA_ROOT) -> list[str]:
     환경 폴더는 data_root 직속 자식 중 SNAPSHOT 패턴 (YYYY.MM.DD) 이 *아니고*
     안에 SNAPSHOT 폴더를 하나 이상 가진 dir 만 후보. 비어있는 폴더도 환경으로
     노출 (사용자가 곧 업로드할 가능성).
+
+    숨김 / 시스템 폴더는 제외:
+      - @eaDir (Synology 썸네일/메타)
+      - #recycle (Synology 휴지통)
+      - .* (점으로 시작하는 hidden)
     """
     if not data_root.exists():
         return []
+    SYSTEM_PREFIXES = ("@", "#", ".")
     envs: list[str] = []
     for p in data_root.iterdir():
         if not p.is_dir():
             continue
         if SNAPSHOT_PATTERN.match(p.name):
             continue  # 옛 평면 구조의 snapshot 폴더 — 환경 아님
+        if p.name.startswith(SYSTEM_PREFIXES):
+            continue  # 시스템 폴더 (@eaDir, #recycle 등) 무시
         envs.append(p.name)
     return sorted(envs)
 
