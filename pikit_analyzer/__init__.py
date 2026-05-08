@@ -1,4 +1,4 @@
-from .data_loader import PikitDataset, load_snapshot, list_snapshot_dates, DEFAULT_DATA_ROOT
+from .data_loader import PikitDataset, load_snapshot, list_snapshot_dates, list_environments, DEFAULT_DATA_ROOT
 from .metrics import (
     compute_user_pnl,
     compute_block_economy,
@@ -36,6 +36,7 @@ __all__ = [
     "PikitDataset",
     "load_snapshot",
     "list_snapshot_dates",
+    "list_environments",
     "DEFAULT_DATA_ROOT",
     "compute_user_pnl",
     "compute_block_economy",

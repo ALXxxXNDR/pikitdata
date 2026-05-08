@@ -45,6 +45,7 @@ from pikit_analyzer import (
     compute_winning_moments,
     compute_per_summon_returns,
     summarize_per_summon,
+    list_environments,
     list_snapshot_dates,
     load_snapshot,
     recommend_block_changes,
@@ -245,14 +246,50 @@ def _ts_filename(prefix: str, ext: str) -> str:
 
 st.sidebar.title("⛏️ PIKIT 밸런스")
 
+# ---- 환경 (Beta / Dev) 셀렉터 ----
+# DEFAULT_DATA_ROOT 직속 자식 폴더 중 SNAPSHOT 패턴 (YYYY.MM.DD) 이 아닌 폴더를
+# 환경 후보로 노출. 보통 'beta', 'dev' 두 개. 비어있어도 노출.
+_env_root = Path(DEFAULT_DATA_ROOT)
+_envs_available = list_environments(_env_root)
+
+# Backward compat: env 폴더가 하나도 없으면 옛 평면 구조 (data/2026.05.06/)
+# 로 가정하고 빈 list 그대로 두면 아래에서 data_root = DEFAULT_DATA_ROOT 그대로.
+if _envs_available:
+    # beta 가 있으면 default, 없으면 첫 번째
+    _default_env_idx = (
+        _envs_available.index("beta") if "beta" in _envs_available else 0
+    )
+    selected_env = st.sidebar.radio(
+        "환경",
+        options=_envs_available,
+        index=_default_env_idx,
+        horizontal=True,
+        help="Beta / Dev 데이터셋 분리. 폴더 추가는 NAS 의 data/ 안에 새 폴더만 만들면 자동 등장.",
+        key="data_env",
+    )
+    _env_data_root = _env_root / selected_env
+else:
+    selected_env = None
+    _env_data_root = _env_root
+
 if PUBLIC_MODE:
     # 공개 모드: 데이터 경로를 사용자가 변경할 수 없게 고정.
-    data_root = str(DEFAULT_DATA_ROOT)
+    data_root = str(_env_data_root)
 else:
     data_root = st.sidebar.text_input(
         "데이터 폴더",
-        value=str(DEFAULT_DATA_ROOT),
+        value=str(_env_data_root),
         help="`2026.05.06` 같은 일별 스냅샷 폴더가 들어 있는 상위 폴더입니다.",
+    )
+
+# 환경 선택 표시 — 어느 셋에서 보고 있는지 사용자가 늘 알 수 있게.
+if selected_env:
+    _env_color = {"beta": "#4caf50", "dev": "#2196f3"}.get(selected_env, "#888")
+    st.sidebar.markdown(
+        f"<div style='padding:8px 12px;background:{_env_color}20;border-left:3px solid {_env_color};"
+        f"border-radius:4px;margin:4px 0 12px;font-size:13px;'>"
+        f"📂 현재 데이터셋: <b style='color:{_env_color}'>{selected_env.upper()}</b></div>",
+        unsafe_allow_html=True,
     )
 
 
@@ -265,8 +302,29 @@ def _apply_mode_filter(dataset, mode):
     return dataset.filter_by_game_mode(mode)
 snapshots = list_snapshot_dates(Path(data_root))
 if not snapshots:
-    # Cloud 환경에서 경로가 안 잡힐 때 진단을 도와줄 정보들을 함께 표시.
-    st.sidebar.error(f"`{data_root}` 에서 스냅샷을 찾지 못했습니다.")
+    # 환경이 비어있는 경우 (예: Dev 셋에 아직 업로드 안 됨) — 친절한 안내.
+    if selected_env:
+        st.warning(
+            f"### 📂 {selected_env.upper()} 데이터셋이 비어있습니다\n\n"
+            f"NAS 의 `/volume1/docker/pikitdata/data/{selected_env}/` 안에 "
+            f"`2026.05.09` 같은 날짜 폴더 + 그 안에 12개 CSV 를 업로드해주세요.\n\n"
+            f"파일 구조 예시:\n"
+            f"```\n"
+            f"data/{selected_env}/\n"
+            f"  2026.05.09/\n"
+            f"    user_transaction_log.csv\n"
+            f"    user.csv\n"
+            f"    item.csv\n"
+            f"    block.csv\n"
+            f"    ... (총 12개)\n"
+            f"```\n\n"
+            f"업로드 후 페이지 새로고침."
+        )
+        if _envs_available and len(_envs_available) > 1:
+            other_envs = [e for e in _envs_available if e != selected_env]
+            st.info(f"💡 다른 데이터셋도 사용 가능: **{', '.join(other_envs).upper()}**. 사이드바 라디오에서 변경.")
+    else:
+        st.sidebar.error(f"`{data_root}` 에서 스냅샷을 찾지 못했습니다.")
     with st.sidebar.expander("진단 정보"):
         resolved = Path(data_root).expanduser()
         if not resolved.is_absolute():
@@ -468,7 +526,15 @@ kpi = _cached_header_kpi(
     ds_start_iso, ds_end_iso,
 )
 
-st.title("PIKIT 베타 밸런스 대시보드")
+if selected_env:
+    _env_color = {"beta": "#4caf50", "dev": "#2196f3"}.get(selected_env, "#888")
+    st.markdown(
+        f"<div style='display:inline-block;padding:4px 12px;background:{_env_color};"
+        f"color:white;border-radius:4px;font-size:14px;font-weight:600;margin-bottom:8px;'>"
+        f"📂 {selected_env.upper()}</div>",
+        unsafe_allow_html=True,
+    )
+st.title("PIKIT 밸런스 대시보드")
 st.caption(
     f"조회 범위: {filter_caption}  ·  트랜잭션 {kpi['transaction_count']:,} 건"
 )

@@ -53,7 +53,10 @@ CACHE_VERSION = 3
 
 
 def _transactions_parquet_path_for(snap_dir: Path) -> Path | None:
-    """transactions Parquet 파일의 캐시 경로. 키는 CSV mtime+size 해시."""
+    """transactions Parquet 파일의 캐시 경로. 키는 env + snapshot 날짜 + CSV mtime+size 해시.
+
+    환경 (beta/dev) 분리 — 같은 날짜라도 다른 폴더면 다른 캐시.
+    """
     if CACHE_DIR is None:
         return None
     csv = snap_dir / "user_transaction_log.csv"
@@ -61,7 +64,8 @@ def _transactions_parquet_path_for(snap_dir: Path) -> Path | None:
         return None
     try:
         stat = csv.stat()
-        tag = f"transactions_{snap_dir.name}_{int(stat.st_mtime)}_{stat.st_size}"
+        env_hint = snap_dir.parent.name if snap_dir.parent.name not in ("data", "") else "root"
+        tag = f"transactions_{env_hint}_{snap_dir.name}_{int(stat.st_mtime)}_{stat.st_size}"
         return CACHE_DIR / f"{tag}.parquet"
     except OSError:
         return None
@@ -664,12 +668,34 @@ def list_snapshot_dates(data_root: Path = DEFAULT_DATA_ROOT) -> list[str]:
     return sorted(dates)
 
 
-def _snapshot_cache_key(snap_dir: Path) -> str:
-    """캐시 키 = 스냅샷 폴더의 모든 CSV mtime + size 의 해시.
+# 환경 (Beta / Dev) 분리 — data_root 의 직속 자식 중 SNAPSHOT 패턴이 *아닌*
+# 폴더가 환경 후보. 예: data/beta/, data/dev/ 같은 구조.
+def list_environments(data_root: Path = DEFAULT_DATA_ROOT) -> list[str]:
+    """Returns environment subfolder names — 'beta', 'dev', etc.
 
+    환경 폴더는 data_root 직속 자식 중 SNAPSHOT 패턴 (YYYY.MM.DD) 이 *아니고*
+    안에 SNAPSHOT 폴더를 하나 이상 가진 dir 만 후보. 비어있는 폴더도 환경으로
+    노출 (사용자가 곧 업로드할 가능성).
+    """
+    if not data_root.exists():
+        return []
+    envs: list[str] = []
+    for p in data_root.iterdir():
+        if not p.is_dir():
+            continue
+        if SNAPSHOT_PATTERN.match(p.name):
+            continue  # 옛 평면 구조의 snapshot 폴더 — 환경 아님
+        envs.append(p.name)
+    return sorted(envs)
+
+
+def _snapshot_cache_key(snap_dir: Path) -> str:
+    """캐시 키 = 스냅샷 폴더의 절대 경로 + 모든 CSV mtime + size 의 해시.
+
+    절대 경로를 포함시켜 환경별 (beta/dev) 같은 날짜의 데이터가 캐시 충돌 안 하게.
     파일이 하나라도 바뀌면 키가 바뀌어 캐시가 자동 무효화됨.
     """
-    parts: list[str] = [f"v{CACHE_VERSION}"]
+    parts: list[str] = [f"v{CACHE_VERSION}", f"path:{snap_dir.resolve()}"]
     for f in sorted(snap_dir.glob("*.csv")):
         try:
             stat = f.stat()
@@ -677,7 +703,10 @@ def _snapshot_cache_key(snap_dir: Path) -> str:
         except OSError:
             continue
     digest = hashlib.sha1("|".join(parts).encode()).hexdigest()[:16]
-    return f"snapshot_{snap_dir.name}_{digest}"
+    # 파일명 — env 가 추정되면 prefix 에 포함해 디스크에서 시각적으로 구분 가능.
+    # snap_dir.parent.name 이 환경명 (data/beta/2026.05.06 → 'beta')
+    env_hint = snap_dir.parent.name if snap_dir.parent.name not in ("data", "") else "root"
+    return f"snapshot_{env_hint}_{snap_dir.name}_{digest}"
 
 
 @lru_cache(maxsize=2)  # 동일 스냅샷 인스턴스 누적 방지 (Cloud 1GB 한도)
@@ -713,8 +742,9 @@ def load_snapshot(snapshot_date: str, data_root: str | None = None) -> PikitData
     # ---- 디스크 캐시 저장 (best-effort) ----
     if CACHE_DIR is not None:
         try:
-            # 옛 캐시 정리 — 같은 snapshot_date 의 옛 mtime 파일 제거.
-            for old in CACHE_DIR.glob(f"snapshot_{snapshot_date}_*.pkl"):
+            # 옛 캐시 정리 — 같은 (env, snapshot_date) 의 옛 mtime 파일 제거.
+            env_hint = snap_dir.parent.name if snap_dir.parent.name not in ("data", "") else "root"
+            for old in CACHE_DIR.glob(f"snapshot_{env_hint}_{snapshot_date}_*.pkl"):
                 try:
                     old.unlink()
                 except OSError:
@@ -892,8 +922,9 @@ def _load_snapshot_from_csv(snap_dir: Path, snapshot_date: str) -> PikitDataset:
     parquet_path = _transactions_parquet_path_for(snap_dir)
     if parquet_path is not None and not parquet_path.exists():
         try:
-            # 옛 mtime 기반 Parquet 정리.
-            for old in CACHE_DIR.glob(f"transactions_{snapshot_date}_*.parquet"):
+            # 옛 mtime 기반 Parquet 정리 — 같은 (env, date) 만 정리.
+            env_hint = snap_dir.parent.name if snap_dir.parent.name not in ("data", "") else "root"
+            for old in CACHE_DIR.glob(f"transactions_{env_hint}_{snapshot_date}_*.parquet"):
                 if old != parquet_path:
                     try:
                         old.unlink()
