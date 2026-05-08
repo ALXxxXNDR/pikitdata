@@ -35,12 +35,13 @@ services:
       # 공개 모드 — 사이드바에서 데이터 경로 입력칸 숨김 + raw CSV 다운로드 비활성화.
       - PIKIT_PUBLIC=1
       - PIKIT_DATA_ROOT=/app/data
-      # PIKITbot 라이브 API URL — Tailscale 등으로 접근 가능한 PIKITbot 대시보드 서버.
-      # 미설정 시 로컬 bot_state.json (file fallback) 사용.
-      # NAS 호스트의 .env 파일 또는 셸에서 export 로 설정.
-      - PIKIT_BOT_API_URL=${PIKIT_BOT_API_URL:-}
+      # PIKITbot 라이브 API URL — 같은 Docker 네트워크 안의 pikitbot 서비스.
+      # default: http://pikitbot:4317 (compose 내부 DNS, 설치만 하면 자동 동작)
+      - PIKIT_BOT_API_URL=${PIKIT_BOT_API_URL:-http://pikitbot:4317}
 
     restart: unless-stopped
+    depends_on:
+      - pikitbot
 
     # Synology 가 NAS 부팅 시 자동 시작.
     labels:
@@ -54,7 +55,62 @@ services:
         reservations:
           memory: 512M
 
+  # ──────────────────────────────────────────────────────────────────
+  # PIKITbot 대시보드 서버 — Mac 의 npm run dashboard 동등 기능을 NAS 내부에서.
+  # SSH 로 Tailscale 통해 Windows 데스크탑 (100.123.168.53) 의 봇 오케스트레이터
+  # 시작/중지. state.json 은 named volume 에 영구 저장.
+  # ──────────────────────────────────────────────────────────────────
+  pikitbot:
+    image: node:20-slim
+    container_name: pikitbot
+    working_dir: /app
+
+    volumes:
+      # PIKITbot 소스 코드 — host 의 /volume1/docker/pikitdata/pikitbot/ 에서 mount
+      - ./pikitbot:/app:rw
+      # node_modules 격리 — 컨테이너 내부 named volume 으로 격리해 host 와 분리
+      - pikitbot_node_modules:/app/node_modules
+      # SSH key — NAS 가 Windows 데스크탑 (Tailscale) 로 SSH 할 때 사용.
+      # 사용자가 host 의 /volume1/docker/pikitdata/.ssh 에 id_ed25519 (+ pub) 배치.
+      - ./.ssh:/root/.ssh:ro
+
+    environment:
+      - DASHBOARD_PORT=4317
+      # Playwright 의존성 — orchestrator 는 Windows 에서 돌고, NAS 측은 dashboard
+      # API 만 띄우면 되므로 chromium 다운로드 스킵 (이미지 가벼워짐, 50MB→3GB 차이).
+      - PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
+    expose:
+      - "4317"  # 같은 docker network 안에서만 접근 — 외부 노출 안 함
+
+    restart: unless-stopped
+
+    # 첫 시작: openssh-client + npm install + dashboard 서버 기동.
+    # node_modules 가 이미 있으면 npm install 스킵 (빠른 재시작).
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        if ! command -v ssh >/dev/null 2>&1; then
+          apt-get update && apt-get install -y --no-install-recommends openssh-client && rm -rf /var/lib/apt/lists/*
+        fi
+        if [ ! -d node_modules ] || [ ! -d node_modules/tsx ]; then
+          echo "[pikitbot] npm install (첫 시작 또는 deps 변경)..."
+          npm install --no-save
+        fi
+        # SSH known_hosts — 매번 묻지 않도록 Tailscale IP 자동 인지.
+        mkdir -p /root/.ssh && chmod 700 /root/.ssh
+        echo "Host *" > /root/.ssh/config
+        echo "  StrictHostKeyChecking accept-new" >> /root/.ssh/config
+        chmod 600 /root/.ssh/config
+        exec npm run dashboard
+
+    labels:
+      - "com.docker.compose.synology-autostart=true"
+
 # Named volumes — Docker 가 자동으로 만들고 관리.
 # 컨테이너 재빌드/재시작 후에도 보존. 절대 사라지지 않음.
 volumes:
   pikit_cache:
+  pikitbot_node_modules:
