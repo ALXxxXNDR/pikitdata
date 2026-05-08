@@ -18,6 +18,10 @@ __pycache__/
 # --- Streamlit ---
 .streamlit/secrets.toml
 
+# --- 환경변수 ---
+.env
+!.env.example
+
 # --- Claude Code local config ---
 .claude/
 

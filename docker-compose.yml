@@ -35,6 +35,10 @@ services:
       # 공개 모드 — 사이드바에서 데이터 경로 입력칸 숨김 + raw CSV 다운로드 비활성화.
       - PIKIT_PUBLIC=1
       - PIKIT_DATA_ROOT=/app/data
+      # PIKITbot 라이브 API URL — Tailscale 등으로 접근 가능한 PIKITbot 대시보드 서버.
+      # 미설정 시 로컬 bot_state.json (file fallback) 사용.
+      # NAS 호스트의 .env 파일 또는 셸에서 export 로 설정.
+      - PIKIT_BOT_API_URL=${PIKIT_BOT_API_URL:-}
 
     restart: unless-stopped
 
