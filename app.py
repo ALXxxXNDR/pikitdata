@@ -406,9 +406,8 @@ elif mode == "단일 날짜":
     )
 
 else:  # 날짜 범위 — 시작 [날짜+시각] ~ 종료 [날짜+시각]
-    default_start = max_date - timedelta(days=2) if max_date else min_date
-    if default_start < min_date:
-        default_start = min_date
+    # 기본값: 데이터의 가장 오래된 날짜 ~ 가장 최신 날짜 (전체 범위).
+    default_start = min_date
 
     st.sidebar.markdown("**📅 조회 시작**")
     sb_s1, sb_s2 = st.sidebar.columns([3, 2])
