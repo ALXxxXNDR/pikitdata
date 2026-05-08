@@ -282,17 +282,6 @@ else:
         help="`2026.05.06` 같은 일별 스냅샷 폴더가 들어 있는 상위 폴더입니다.",
     )
 
-# 환경 선택 표시 — 어느 셋에서 보고 있는지 사용자가 늘 알 수 있게.
-if selected_env:
-    _env_color = {"beta": "#4caf50", "dev": "#2196f3"}.get(selected_env, "#888")
-    st.sidebar.markdown(
-        f"<div style='padding:8px 12px;background:{_env_color}20;border-left:3px solid {_env_color};"
-        f"border-radius:4px;margin:4px 0 12px;font-size:13px;'>"
-        f"📂 현재 데이터셋: <b style='color:{_env_color}'>{selected_env.upper()}</b></div>",
-        unsafe_allow_html=True,
-    )
-
-
 # 헬퍼: 사이드바에서 어떤 모드 필터가 선택되든, 모든 분석 화면이
 # 같은 ds 를 쓰도록 마지막에 한 번 적용합니다. 적용 순서는
 # (날짜 슬라이스) → (모드 슬라이스) 입니다.
@@ -301,6 +290,20 @@ def _apply_mode_filter(dataset, mode):
         return dataset
     return dataset.filter_by_game_mode(mode)
 snapshots = list_snapshot_dates(Path(data_root))
+
+# 데이터셋 표시 — 가장 최근 스냅샷 폴더명 (= 날짜) 으로. 새 데이터 올리면 자동 갱신.
+if selected_env:
+    _env_color = {"beta": "#4caf50", "dev": "#2196f3"}.get(selected_env, "#888")
+    if snapshots:
+        _label = snapshots[-1]  # 가장 최신 스냅샷 폴더명 (예: 2026.05.08)
+    else:
+        _label = "(비어있음)"
+    st.sidebar.markdown(
+        f"<div style='padding:8px 12px;background:{_env_color}20;border-left:3px solid {_env_color};"
+        f"border-radius:4px;margin:4px 0 12px;font-size:13px;'>"
+        f"📂 현재 데이터셋: <b style='color:{_env_color}'>{_label}</b></div>",
+        unsafe_allow_html=True,
+    )
 if not snapshots:
     # 환경이 비어있는 경우 (예: Dev 셋에 아직 업로드 안 됨) — 친절한 안내.
     if selected_env:
@@ -527,10 +530,12 @@ kpi = _cached_header_kpi(
 
 if selected_env:
     _env_color = {"beta": "#4caf50", "dev": "#2196f3"}.get(selected_env, "#888")
+    # 환경 + 최신 스냅샷 폴더명 (= 날짜) 함께 표시. 새 데이터 올리면 자동 갱신.
+    _top_label = f"{selected_env.upper()} · {snapshots[-1]}" if snapshots else f"{selected_env.upper()} (비어있음)"
     st.markdown(
         f"<div style='display:inline-block;padding:4px 12px;background:{_env_color};"
         f"color:white;border-radius:4px;font-size:14px;font-weight:600;margin-bottom:8px;'>"
-        f"📂 {selected_env.upper()}</div>",
+        f"📂 {_top_label}</div>",
         unsafe_allow_html=True,
     )
 st.title("PIKIT 밸런스 대시보드")
