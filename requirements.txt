@@ -4,3 +4,4 @@ streamlit>=1.30,<2.0
 plotly>=5.18,<7.0
 pyarrow>=14.0,<22.0
 duckdb>=1.0,<2.0
+eth-account>=0.10,<1.0

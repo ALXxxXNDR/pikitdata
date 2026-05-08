@@ -21,6 +21,11 @@ __pycache__/
 # --- Claude Code local config ---
 .claude/
 
+# --- 외부 참고용 repo (분석 전용, 통합 안 함) ---
+PIKIT-BE-develop/
+PIKIT-GameServer-develop/
+PIKITbot/
+
 # --- DATA — never commit raw beta data ---
 # Local data folder used for development:
 PIKIT BETA DATA/
@@ -33,6 +38,8 @@ data/
 *.zip
 /*.csv
 /*.json
+# Exception: bot_state.json 은 sanitized 봇 세트 템플릿 (privateKey 없음). 커밋 OK.
+!bot_state.json
 
 # Anything dropped into a top-level snapshot folder pattern:
 /2026.*

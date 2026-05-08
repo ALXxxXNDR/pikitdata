@@ -45,6 +45,7 @@ from pikit_analyzer import (
     compute_winning_moments,
     compute_per_summon_returns,
     summarize_per_summon,
+    bot_state,
     list_environments,
     list_snapshot_dates,
     load_snapshot,
@@ -63,81 +64,44 @@ st.set_page_config(
 # 헬퍼
 # ---------------------------------------------------------------------------
 
-# 운영자 봇 지갑 세트 — 시간대별 PNL 탭에서 한 번에 선택 가능.
-# 새 세트 추가는 BOT_SETS 에 entry 만 추가하면 picker 에 자동 등장.
-# 각 세트는 "user_ids" 또는 "wallets" 둘 중 하나로 정의. wallets 는 데이터 안의
-# wallet_address 와 case-insensitive 매칭.
-BOT_SETS: dict[str, dict] = {
-    "A-Bot-set": {
-        # 옛 운영 봇 — user_id 매칭 (지갑 풀주소 미보유, prefix 만 알려진 상태).
-        "user_ids": [30, 31, 47, 60, 61, 62, 64, 63, 65, 66, 67, 56],
-    },
-    "B-Bot-set": {
-        # 두 번째 운영 봇 셋 — 지갑 주소 매칭.
-        "wallets": [
-            "0x83004376DC7A9Ab7c9b4AB99a37357CC6c30D109",
-            "0xf4c86873DC208303e114d25859666d48dFFefad4",
-            "0x813aa26437B082CfB1af2483AF9C3E27E2630445",
-            "0x6f5924C3328792e9586f3cb21Fdd96e0A8ef1e8e",
-            "0x33353E126D24F5A5CC7cdaE50F135f3362b14446",
-            "0x79CA6eba59F1816Cd927957E0c8347dDa1C3FdFA",
-            "0xfCe91B40911B7583e6aFB3Ad521c69A06B95397d",
-            "0x69fc99898dB1e3F8BA644E6ab9321A1D539D50e5",
-            "0x47407a480045343E487e0Bd078Cd588af3a35a50",
-            "0x7Fa299fB3E686f33Dc580304e370dA04bb5186b1",
-            "0x08457a689828c697d64fbD0650a1772ef7B464eB",
-            "0x2151A814545f76a292456DEEc455EB2D31884458",
-        ],
-    },
-    "C-Bot-set": {
-        # 현재 운영 봇 — 지갑 주소 매칭.
-        "wallets": [
-            "0x90807d722298395A74f21607B1BCF408F640aC90",
-            "0x902267d3eCB1B21966c47fb6E671bF8A13963Eb6",
-            "0xcDc90A1f332c3bBD49b0a6750d66A11afe1A3A95",
-            "0x7077AF3938548963f7dbD89183ec51140f5f9e29",
-            "0x5aFaa54afbD7B88bAEB15714F547F1fc6C04B1D4",
-            "0x98502cD35CB57c57B2c27332Ac59b069458F66B4",
-            "0x628FC1E99edbcE1df36eD4b1E26EbB5a019A87b0",
-            "0x25C8B3D653Da3e3268354C864f3F07B7A8603Ea8",
-            "0xFc094cC65b4510Fd593f825813628F708CFD05d0",
-            "0x212A23fC3ed5C9B20809715c37A0300Bd7603F15",
-            "0x21C9189DA99DBdc968CB86505dB0130F310C10Ed",
-            "0x41a31Ba09FF0AAD35aA84A17090E2379F6041B80",
-        ],
-    },
-}
-DEFAULT_BOT_SET = "C-Bot-set"
+# 봇 세트 — 봇 관리 탭에서 동적으로 만들고 관리. 더 이상 코드에 하드코딩 없음.
+# 세트는 bot_state.json (named volume) 에 저장되며, 트랙(env)별 deployments.setIds
+# 에 등록된 세트만 PNL picker 에 노출됨.
+
+def get_bot_sets_for_track(track: str | None) -> dict[str, dict]:
+    """현재 env(track) 에 배포된 봇 세트 목록.
+
+    반환: {세트이름: {"wallets": ["0x...", ...]}, ...}
+    """
+    if not track:
+        return {}
+    state = bot_state.load_state()
+    return bot_state.get_pnl_compatible_sets(state, track)
 
 
-def resolve_bot_set(set_name: str, pnl_df) -> dict[int, str]:
+def resolve_bot_set(bot_sets: dict[str, dict], set_name: str, pnl_df) -> dict[int, str]:
     """봇 세트 정의를 현재 데이터의 user_id 매핑으로 해석.
 
     return: {user_id: "bot-NN"} — 실제로 데이터에 존재하는 멤버만.
+    bot_sets 는 get_bot_sets_for_track() 의 결과. PIKITbot 의 wallet 기반.
     """
-    cfg = BOT_SETS.get(set_name) or {}
+    cfg = bot_sets.get(set_name) or {}
     if pnl_df is None or pnl_df.empty:
         return {}
-    if "user_ids" in cfg:
-        present = set(pnl_df["user_id"].astype(int).tolist())
-        return {
-            uid: f"bot-{i+1:02d}"
-            for i, uid in enumerate(cfg["user_ids"])
-            if uid in present
-        }
-    if "wallets" in cfg:
-        wallet_to_label = {
-            w.lower(): f"bot-{i+1:02d}" for i, w in enumerate(cfg["wallets"])
-        }
-        wallet_lower = pnl_df["wallet_address"].astype(str).str.lower()
-        matched = pnl_df[wallet_lower.isin(wallet_to_label.keys())]
-        return {
-            int(row["user_id"]): wallet_to_label[
-                str(row.get("wallet_address", "")).lower()
-            ]
-            for _, row in matched.iterrows()
-        }
-    return {}
+    wallets_list = cfg.get("wallets") or []
+    if not wallets_list:
+        return {}
+    wallet_to_label = {
+        w.lower(): f"bot-{i+1:02d}" for i, w in enumerate(wallets_list)
+    }
+    wallet_lower = pnl_df["wallet_address"].astype(str).str.lower()
+    matched = pnl_df[wallet_lower.isin(wallet_to_label.keys())]
+    return {
+        int(row["user_id"]): wallet_to_label[
+            str(row.get("wallet_address", "")).lower()
+        ]
+        for _, row in matched.iterrows()
+    }
 
 
 def _cached_snapshot(date_str: str, data_root: str):
@@ -596,6 +560,7 @@ tab_labels = [
 ]
 if not PUBLIC_MODE:
     tab_labels.append("📦 원본 데이터")
+tab_labels.append("🤖 봇 관리")  # 항상 마지막 (rightmost)
 
 _tabs = st.tabs(tab_labels)
 tab_users = _tabs[0]
@@ -605,7 +570,12 @@ tab_hourly = _tabs[3]
 tab_user_detail = _tabs[4]
 tab_items = _tabs[5]
 tab_blocks = _tabs[6]
-tab_data = _tabs[7] if not PUBLIC_MODE else None
+if not PUBLIC_MODE:
+    tab_data = _tabs[7]
+    tab_bot_mgmt = _tabs[8]
+else:
+    tab_data = None
+    tab_bot_mgmt = _tabs[7]
 
 
 # ----------------------------------------------------------------------------
@@ -1267,45 +1237,50 @@ with tab_hourly:
         progress_slot.empty()
         st.info("표시할 유저가 없습니다.")
     else:
-        # 봇 세트 선택
-        set_names = list(BOT_SETS.keys())
-        default_set_idx = (
-            set_names.index(DEFAULT_BOT_SET) if DEFAULT_BOT_SET in set_names else 0
-        )
-        selected_set = st.radio(
-            "봇 세트",
-            options=set_names,
-            index=default_set_idx,
-            horizontal=True,
-            help=(
-                "선택한 세트의 지갑이 🤖 로 표시되고 기본 멀티셀렉트 됩니다. "
-                "세트 추가는 코드의 BOT_SETS 에 entry 만 더하면 됩니다."
-            ),
-            key="hourly_bot_set",
-        )
-        active_bots = resolve_bot_set(selected_set, users_for_picker)
+        # 봇 세트 — 봇 관리 탭에서 만든 세트 중 현재 env(track) 에 배포된 것만.
+        track_for_bots = selected_env or "beta"
+        bot_sets_for_track = get_bot_sets_for_track(track_for_bots)
+        set_names = list(bot_sets_for_track.keys())
 
-        total_set_size = len(
-            BOT_SETS[selected_set].get("user_ids")
-            or BOT_SETS[selected_set].get("wallets")
-            or []
-        )
-        if active_bots:
-            st.caption(
-                f"✓ {selected_set} — 데이터에서 {len(active_bots)}/{total_set_size} 개 매칭됨"
+        if not set_names:
+            st.info(
+                f"📭 **{track_for_bots.upper()}** 트랙에 배포된 봇 세트가 없습니다.\n\n"
+                f"오른쪽 끝의 **🤖 봇 관리** 탭에서 세트를 만들고 이 트랙에 배포하면 "
+                f"여기 자동으로 등장합니다."
             )
+            selected_set = None
+            active_bots = {}
         else:
-            st.caption(f"⚠️ {selected_set} 의 멤버를 현재 데이터에서 찾지 못했습니다.")
+            selected_set = st.radio(
+                "봇 세트",
+                options=set_names,
+                index=0,
+                horizontal=True,
+                help="🤖 봇 관리 탭에서 만든 세트 중 현재 트랙에 배포된 것만 표시.",
+                key="hourly_bot_set",
+            )
+            active_bots = resolve_bot_set(bot_sets_for_track, selected_set, users_for_picker)
 
-        # picker — bot 들 먼저, 그 다음 일반 유저 (user_id 순)
-        is_bot = users_for_picker["user_id"].isin(active_bots.keys())
-        bots_first = users_for_picker[is_bot].copy()
-        bots_first["bot_order"] = bots_first["user_id"].map(
-            {uid: int(label.split("-")[1]) for uid, label in active_bots.items()}
-        )
-        bots_first = bots_first.sort_values("bot_order")
-        others = users_for_picker[~is_bot].sort_values("user_id")
-        users_sorted = pd.concat([bots_first, others], ignore_index=True)
+            total_set_size = len(bot_sets_for_track[selected_set].get("wallets", []))
+            if active_bots:
+                st.caption(
+                    f"✓ {selected_set} — 데이터에서 {len(active_bots)}/{total_set_size} 개 매칭됨"
+                )
+            else:
+                st.caption(f"⚠️ {selected_set} 의 멤버를 현재 데이터에서 찾지 못했습니다.")
+
+        # 세트가 없으면 봇 우선 정렬 안 함 — 그냥 user_id 순
+        if active_bots:
+            is_bot = users_for_picker["user_id"].isin(active_bots.keys())
+            bots_first = users_for_picker[is_bot].copy()
+            bots_first["bot_order"] = bots_first["user_id"].map(
+                {uid: int(label.split("-")[1]) for uid, label in active_bots.items()}
+            )
+            bots_first = bots_first.sort_values("bot_order")
+            others = users_for_picker[~is_bot].sort_values("user_id")
+            users_sorted = pd.concat([bots_first, others], ignore_index=True)
+        else:
+            users_sorted = users_for_picker.sort_values("user_id").reset_index(drop=True)
 
         option_to_id: dict[str, int] = {}
         options: list[str] = []
@@ -1330,12 +1305,13 @@ with tab_hourly:
         cc1, cc2 = st.columns([3, 1])
         with cc1:
             default_pick = bot_options if bot_options else options[: min(3, len(options))]
+            _set_label = selected_set or "(세트 미선택)"
             picked = st.multiselect(
-                f"지갑 선택 — 🤖 표시는 {selected_set} (기본값)",
+                f"지갑 선택 — 🤖 표시는 {_set_label} (기본값)",
                 options=options,
                 default=default_pick,
-                help=f"{selected_set} 멤버가 기본 선택. 세트는 위 라디오에서 변경.",
-                key=f"hourly_picked_wallets__{selected_set}",
+                help=f"{_set_label} 멤버가 기본 선택. 세트는 위 라디오에서 변경.",
+                key=f"hourly_picked_wallets__{_set_label}",
             )
         with cc2:
             view_mode = st.radio(
@@ -2118,4 +2094,190 @@ if tab_data is not None:
         data=df.to_csv(index=False).encode("utf-8-sig"),
         file_name=_ts_filename(table.split()[0], "csv"),
         mime="text/csv",
+    )
+
+
+# -------- 🤖 봇 관리 탭 (rightmost) --------
+with tab_bot_mgmt:
+    st.subheader(f"🤖 봇 관리 — {selected_env.upper() if selected_env else 'BETA'} 트랙")
+    st.write(
+        "현재 트랙 (env) 에 배포된 봇 세트를 보고/추가/관리합니다. "
+        "여기서 만든 세트는 **시간대별 PNL** 탭의 봇 세트 라디오에 자동 등장합니다."
+    )
+
+    _track = selected_env or "beta"
+    _bot_state = bot_state.load_state()
+    _track_sets = bot_state.list_sets_for_track(_bot_state, _track)
+    _all_sets = bot_state.list_all_sets(_bot_state)
+    _track_set_ids = set(bot_state.get_track_setIds(_bot_state, _track))
+
+    # ---- 1. 새 세트 만들기 ----
+    with st.expander("➕ 새 봇 세트 생성", expanded=not _track_sets):
+        st.write(
+            f"이름을 정하고 12개 지갑을 자동 생성합니다. "
+            f"**privateKey 는 한 번만 화면에 표시되고 다시 못 봅니다 — 꼭 다운로드/복사해두세요.**"
+        )
+        col_a, col_b = st.columns([3, 2])
+        with col_a:
+            new_set_name = st.text_input(
+                "세트 이름",
+                value="",
+                placeholder=f"예: {_track}3, alpha, 2026-05-runner …",
+                key="new_set_name",
+            )
+        with col_b:
+            assign_to_track = st.checkbox(
+                f"바로 {_track.upper()} 트랙에 배포",
+                value=True,
+                help="체크하면 시간대별 PNL 탭에서 즉시 사용 가능. 미체크면 미배포 상태로 둠.",
+                key="new_set_assign",
+            )
+        if st.button("🎲 12개 지갑 자동 생성 + 세트 만들기", type="primary", use_container_width=True):
+            if not new_set_name.strip():
+                st.error("❌ 세트 이름을 입력해주세요.")
+            else:
+                try:
+                    new_set, wallets = bot_state.create_new_set(
+                        _bot_state,
+                        name=new_set_name.strip(),
+                        track=_track if assign_to_track else None,
+                    )
+                    saved = bot_state.save_state(_bot_state)
+                    if saved:
+                        st.success(
+                            f"✅ 세트 **{new_set['name']}** 생성 완료 — 12개 지갑. "
+                            + (f"{_track.upper()} 트랙에 배포됨." if assign_to_track else "미배포 (수동 배포 필요).")
+                        )
+                        # 한 번만 표시되는 privateKey 다운로드 + 표
+                        st.warning(
+                            "⚠️ **아래 privateKey 는 지금 한 번만 표시됩니다.** "
+                            "복사 또는 CSV 다운로드 후 안전한 곳에 보관하세요. "
+                            "절대 commit 하지 마세요."
+                        )
+                        wallet_lines = [f"{b['label']}\t{b['address']}\t{w['privateKey']}"
+                                        for b, w in zip(new_set["bots"], wallets)]
+                        wallet_csv = "label,address,privateKey\n" + "\n".join(
+                            f"{b['label']},{b['address']},{w['privateKey']}"
+                            for b, w in zip(new_set["bots"], wallets)
+                        )
+                        st.download_button(
+                            "📥 privateKey 포함 CSV 다운로드 (한 번만)",
+                            data=wallet_csv.encode("utf-8"),
+                            file_name=f"{new_set['name']}_wallets.csv",
+                            mime="text/csv",
+                            type="primary",
+                        )
+                        with st.expander("화면에서 보기 (스크린샷 OK)", expanded=False):
+                            for line in wallet_lines:
+                                st.code(line)
+                        st.info("페이지를 새로고침하면 위 privateKey 는 사라집니다.")
+                    else:
+                        st.error("❌ bot_state.json 저장 실패 — 권한 또는 디스크 확인 필요.")
+                except Exception as e:
+                    st.error(f"❌ 세트 생성 실패: {e}")
+
+    st.markdown("---")
+
+    # ---- 2. 현재 트랙의 세트 목록 ----
+    if not _track_sets:
+        st.info(f"📭 **{_track.upper()}** 트랙에 배포된 세트가 없습니다. 위에서 새 세트를 만들거나, 아래의 미배포 세트를 배포하세요.")
+    else:
+        st.markdown(f"### 📋 {_track.upper()} 트랙의 활성 세트")
+        for s in _track_sets:
+            with st.expander(f"**{s['name']}** — {len(s['bots'])}개 봇  (id: `{s['id']}`)", expanded=False):
+                # 트랙 배포 토글
+                col_x, col_y = st.columns([2, 1])
+                with col_x:
+                    keep_deployed = st.checkbox(
+                        f"{_track.upper()} 트랙에 배포 유지",
+                        value=True,
+                        key=f"deploy_{s['id']}_{_track}",
+                    )
+                    if not keep_deployed:
+                        bot_state.update_set_track_assignment(_bot_state, s["id"], _track, False)
+                        bot_state.save_state(_bot_state)
+                        st.rerun()
+                with col_y:
+                    if st.button("🗑️ 세트 영구 삭제", key=f"del_{s['id']}", type="secondary"):
+                        if bot_state.delete_set(_bot_state, s["id"]):
+                            bot_state.save_state(_bot_state)
+                            st.success(f"세트 {s['name']} 삭제됨")
+                            st.rerun()
+
+                # 봇 목록 + 전략 편집
+                bots_df = pd.DataFrame([
+                    {
+                        "label": b["label"],
+                        "address": b["address"],
+                        "strategy": b.get("strategy", "pickaxe-1"),
+                    }
+                    for b in s["bots"]
+                ])
+                edited = st.data_editor(
+                    bots_df,
+                    column_config={
+                        "label": st.column_config.TextColumn("라벨", disabled=True),
+                        "address": st.column_config.TextColumn("지갑 주소", disabled=True),
+                        "strategy": st.column_config.SelectboxColumn(
+                            "전략",
+                            options=bot_state.AVAILABLE_STRATEGIES,
+                            required=True,
+                        ),
+                    },
+                    hide_index=True,
+                    width="stretch",
+                    key=f"editor_{s['id']}",
+                )
+                # 전략 변경 시 저장
+                if not edited.equals(bots_df):
+                    if st.button(f"💾 '{s['name']}' 전략 변경 저장", key=f"save_{s['id']}", type="primary"):
+                        for orig_bot, edited_row in zip(s["bots"], edited.itertuples(index=False)):
+                            if orig_bot.get("strategy") != edited_row.strategy:
+                                bot_state.update_bot_strategy(
+                                    _bot_state, s["id"], orig_bot["id"], edited_row.strategy
+                                )
+                        bot_state.save_state(_bot_state)
+                        st.success("전략 저장 완료")
+                        st.rerun()
+
+                # 주소 export
+                addresses_text = "\n".join(b["address"] for b in s["bots"])
+                st.download_button(
+                    f"📋 {s['name']} 지갑 주소 export (TXT)",
+                    data=addresses_text.encode("utf-8"),
+                    file_name=f"{s['name']}_addresses.txt",
+                    mime="text/plain",
+                    key=f"export_{s['id']}",
+                )
+
+    # ---- 3. 미배포 세트 (다른 트랙 또는 어디에도 안 묶인 것) ----
+    _unassigned_sets = [s for s in _all_sets if s["id"] not in _track_set_ids]
+    if _unassigned_sets:
+        st.markdown("---")
+        st.markdown(f"### 📦 다른 트랙 / 미배포 세트 ({len(_unassigned_sets)}개)")
+        st.caption(f"아래 세트들은 현재 {_track.upper()} 트랙에 배포되어 있지 않습니다. 배포하면 PNL 탭에 등장.")
+        for s in _unassigned_sets:
+            other_tracks = []
+            for t, dep in _bot_state.get("deployments", {}).items():
+                if s["id"] in dep.get("setIds", []):
+                    other_tracks.append(t.upper())
+            label = f"**{s['name']}** — {len(s['bots'])}개 봇"
+            if other_tracks:
+                label += f"  (현재 배포: {', '.join(other_tracks)})"
+            else:
+                label += "  (어디에도 미배포)"
+
+            cc_a, cc_b = st.columns([5, 1])
+            with cc_a:
+                st.markdown(label)
+            with cc_b:
+                if st.button(f"📥 {_track.upper()} 에 배포", key=f"deploy_to_{s['id']}_{_track}"):
+                    bot_state.update_set_track_assignment(_bot_state, s["id"], _track, True)
+                    bot_state.save_state(_bot_state)
+                    st.success(f"{s['name']} → {_track.upper()} 배포")
+                    st.rerun()
+
+    st.markdown("---")
+    st.caption(
+        f"📁 상태 저장 위치: `{bot_state.WRITABLE_PATH}` (named volume — 컨테이너 재빌드 후에도 보존)"
     )

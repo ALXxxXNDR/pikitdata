@@ -1,4 +1,5 @@
 from .data_loader import PikitDataset, load_snapshot, list_snapshot_dates, list_environments, DEFAULT_DATA_ROOT
+from . import bot_state
 from .metrics import (
     compute_user_pnl,
     compute_block_economy,
