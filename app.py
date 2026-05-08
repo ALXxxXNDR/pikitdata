@@ -72,7 +72,7 @@ BOT_SETS: dict[str, dict] = {
         "user_ids": [30, 31, 47, 60, 61, 62, 64, 63, 65, 66, 67, 56],
     },
     "B-Bot-set": {
-        # 현재 운영 봇 — 지갑 주소 매칭.
+        # 두 번째 운영 봇 셋 — 지갑 주소 매칭.
         "wallets": [
             "0x83004376DC7A9Ab7c9b4AB99a37357CC6c30D109",
             "0xf4c86873DC208303e114d25859666d48dFFefad4",
@@ -88,8 +88,25 @@ BOT_SETS: dict[str, dict] = {
             "0x2151A814545f76a292456DEEc455EB2D31884458",
         ],
     },
+    "C-Bot-set": {
+        # 현재 운영 봇 — 지갑 주소 매칭.
+        "wallets": [
+            "0x90807d722298395A74f21607B1BCF408F640aC90",
+            "0x902267d3eCB1B21966c47fb6E671bF8A13963Eb6",
+            "0xcDc90A1f332c3bBD49b0a6750d66A11afe1A3A95",
+            "0x7077AF3938548963f7dbD89183ec51140f5f9e29",
+            "0x5aFaa54afbD7B88bAEB15714F547F1fc6C04B1D4",
+            "0x98502cD35CB57c57B2c27332Ac59b069458F66B4",
+            "0x628FC1E99edbcE1df36eD4b1E26EbB5a019A87b0",
+            "0x25C8B3D653Da3e3268354C864f3F07B7A8603Ea8",
+            "0xFc094cC65b4510Fd593f825813628F708CFD05d0",
+            "0x212A23fC3ed5C9B20809715c37A0300Bd7603F15",
+            "0x21C9189DA99DBdc968CB86505dB0130F310C10Ed",
+            "0x41a31Ba09FF0AAD35aA84A17090E2379F6041B80",
+        ],
+    },
 }
-DEFAULT_BOT_SET = "B-Bot-set"
+DEFAULT_BOT_SET = "C-Bot-set"
 
 
 def resolve_bot_set(set_name: str, pnl_df) -> dict[int, str]:
