@@ -1278,6 +1278,23 @@ with tab_hourly:
         # ───────────────────────────────────────────────────────────
         @st.dialog("📋 봇 세트 관리", width="large")
         def _set_management_dialog():
+            # paste 텍스트 → bots 리스트 파싱 (이름/주소). 무효 줄은 skipped.
+            def _parse_paste(text: str):
+                bots: list[dict] = []
+                skipped: list[str] = []
+                for line in text.strip().split("\n"):
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    parts = line.split(None, 1)
+                    if len(parts) != 2:
+                        skipped.append(line); continue
+                    label, addr = parts[0].strip(), parts[1].strip()
+                    if not addr.startswith("0x") or len(addr) != 42:
+                        skipped.append(line); continue
+                    bots.append({"label": label, "address": addr})
+                return bots, skipped
+
             mgmt_state = bot_state.load_state()
             current_sets = mgmt_state.get("sets", [])
 
@@ -1286,24 +1303,60 @@ with tab_hourly:
                 st.caption("아직 등록된 세트가 없습니다. 아래에서 추가.")
             else:
                 for s in current_sets:
-                    sc1, sc2, sc3 = st.columns([4, 1, 1])
                     n_bots = len(s.get("bots", []))
-                    with sc1:
-                        with st.expander(f"**{s['name']}** — {n_bots}개 지갑"):
-                            lines = "\n".join(
-                                f"{b.get('label', '?')}\t{b.get('address', '?')}"
-                                for b in s.get("bots", [])
-                            )
-                            st.code(lines, language="text")
-                    with sc2:
-                        # 빈 칸 (정렬용)
-                        st.write("")
-                    with sc3:
-                        if st.button("🗑️", key=f"del_{s['id']}", help=f"세트 '{s['name']}' 삭제"):
-                            bot_state.delete_set(mgmt_state, s["id"])
-                            bot_state.save_state(mgmt_state)
-                            st.success(f"세트 '{s['name']}' 삭제됨")
-                            st.rerun()
+                    with st.expander(f"**{s['name']}** — {n_bots}개 지갑"):
+                        # 편집 폼 — 이름 + 주소 둘 다 수정 가능
+                        edit_name = st.text_input(
+                            "세트 이름",
+                            value=s.get("name", ""),
+                            key=f"edit_name_{s['id']}",
+                        )
+                        current_lines = "\n".join(
+                            f"{b.get('label', '?')}\t{b.get('address', '?')}"
+                            for b in s.get("bots", [])
+                        )
+                        edit_addrs = st.text_area(
+                            "지갑 주소들",
+                            value=current_lines,
+                            height=240,
+                            key=f"edit_addrs_{s['id']}",
+                        )
+
+                        ec1, ec2 = st.columns([3, 1])
+                        with ec1:
+                            if st.button("💾 변경 저장", key=f"save_{s['id']}",
+                                         type="primary", use_container_width=True):
+                                bots_parsed, skipped = _parse_paste(edit_addrs)
+                                if not bots_parsed:
+                                    st.error("❌ 유효한 (라벨 + 0x주소) 줄이 없습니다.")
+                                else:
+                                    s["name"] = edit_name.strip() or s["name"]
+                                    s["bots"] = [
+                                        {
+                                            "id": f"{s['id']}:{b['label']}",
+                                            "slot": i + 1,
+                                            "label": b["label"],
+                                            "address": b["address"],
+                                            "strategy": "manual",
+                                        }
+                                        for i, b in enumerate(bots_parsed)
+                                    ]
+                                    ok, diag = bot_state.save_state_with_diag(mgmt_state)
+                                    if ok:
+                                        msg = f"✅ '{s['name']}' 업데이트됨 — {len(bots_parsed)}개 지갑"
+                                        if skipped:
+                                            msg += f" (무시된 줄 {len(skipped)}개)"
+                                        st.success(msg)
+                                        st.rerun()
+                                    else:
+                                        st.error(f"❌ 저장 실패: {diag}")
+                        with ec2:
+                            if st.button("🗑️ 삭제", key=f"del_{s['id']}",
+                                         use_container_width=True):
+                                bot_state.delete_set(mgmt_state, s["id"])
+                                bot_state.save_state(mgmt_state)
+                                st.success(f"세트 '{s['name']}' 삭제됨")
+                                st.rerun()
 
             st.markdown("---")
             st.markdown("### 새 세트 추가")
@@ -1336,21 +1389,7 @@ with tab_hourly:
                 elif not paste_text.strip():
                     st.error("❌ 지갑 주소를 한 줄 이상 붙여넣어주세요.")
                 else:
-                    bots_parsed: list[dict] = []
-                    skipped: list[str] = []
-                    for line in paste_text.strip().split("\n"):
-                        line = line.strip()
-                        if not line or line.startswith("#"):
-                            continue
-                        parts = line.split(None, 1)  # 공백/탭 어떤 것이든 첫 번째 분리
-                        if len(parts) != 2:
-                            skipped.append(line)
-                            continue
-                        label, addr = parts[0].strip(), parts[1].strip()
-                        if not addr.startswith("0x") or len(addr) != 42:
-                            skipped.append(line)
-                            continue
-                        bots_parsed.append({"label": label, "address": addr})
+                    bots_parsed, skipped = _parse_paste(paste_text)
 
                     # 중복 세트 ID 처리
                     sid_base = new_set_name.strip().lower().replace(" ", "_")
