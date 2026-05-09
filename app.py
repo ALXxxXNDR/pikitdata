@@ -179,6 +179,30 @@ def _cached_header_kpi(snapshot_date: str, data_root: str, mode_filter: str | No
     return compute_kpi_summary(ds, exclude_system_users=exclude_system)
 
 
+# 곡괭이 소환 ROI — vectorized 라 ~0.6s 지만 매 인터랙션 재계산은 낭비.
+@st.cache_data(show_spinner="🎰 곡괭이 소환 ROI 계산 중…", max_entries=5, ttl=3600)
+def _cached_per_summon_returns(snapshot_date: str, data_root: str, mode_filter: str | None,
+                               exclude_system: bool, start_iso: str, end_iso: str):
+    ds = load_snapshot(snapshot_date, data_root=data_root)
+    if mode_filter:
+        ds = ds.filter_by_game_mode(mode_filter)
+    if start_iso and end_iso:
+        ds = ds.filter_by_date_range(start_iso, end_iso)
+    return compute_per_summon_returns(ds, exclude_system_users=exclude_system)
+
+
+# 승리 경험 — 유저별 path 계산 무거운 편.
+@st.cache_data(show_spinner="🎯 승리 경험 계산 중…", max_entries=5, ttl=3600)
+def _cached_winning_moments(snapshot_date: str, data_root: str, mode_filter: str | None,
+                            exclude_system: bool, start_iso: str, end_iso: str):
+    ds = load_snapshot(snapshot_date, data_root=data_root)
+    if mode_filter:
+        ds = ds.filter_by_game_mode(mode_filter)
+    if start_iso and end_iso:
+        ds = ds.filter_by_date_range(start_iso, end_iso)
+    return compute_winning_moments(ds, exclude_system_users=exclude_system)
+
+
 def _fmt_int(v) -> str:
     if v is None or pd.isna(v):
         return "—"
@@ -624,7 +648,10 @@ with tab_hourly:
 # -------- 유저 탭 --------
 with tab_users:
     _users_progress.progress(40, text="40% — 유저 PNL 집계 중…")
-    pnl = compute_user_pnl(ds, exclude_system_users=exclude_system)
+    pnl = _cached_user_pnl(
+        ds_snapshot_for_cache, data_root, mode_filter_for_ds, exclude_system,
+        ds_start_iso, ds_end_iso,
+    )
     _users_progress.progress(85, text="85% — 차트/표 렌더링 중…")
     # 무거운 계산 완료 — 로딩 박스 + 진행 바 제거
     _users_box.empty()
@@ -749,7 +776,10 @@ with tab_winning:
         "'우리 게임이 충분한 승리 경험을 주고 있는가'를 진단합니다."
     )
 
-    wm = compute_winning_moments(ds, exclude_system_users=exclude_system)
+    wm = _cached_winning_moments(
+        ds_snapshot_for_cache, data_root, mode_filter_for_ds, exclude_system,
+        ds_start_iso, ds_end_iso,
+    )
     if wm.empty:
         st.info("이 조건에 트랜잭션이 없습니다.")
     else:
@@ -891,7 +921,10 @@ with tab_winning:
 # -------- 🎰 곡괭이 소환 ROI 탭 --------
 with tab_summon:
     _summon_progress.progress(40, text="40% — 소환별 net PNL 계산 중…")
-    psr = compute_per_summon_returns(ds, exclude_system_users=exclude_system)
+    psr = _cached_per_summon_returns(
+        ds_snapshot_for_cache, data_root, mode_filter_for_ds, exclude_system,
+        ds_start_iso, ds_end_iso,
+    )
     _summon_progress.progress(85, text="85% — 차트/표 렌더링 중…")
     # 무거운 계산 완료 — pre-emit 슬롯 제거.
     _summon_box.empty()
