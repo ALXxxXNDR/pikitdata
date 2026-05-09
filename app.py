@@ -1680,87 +1680,91 @@ with tab_hourly:
                         legend_title="지갑",
                     )
                     fig_cum.add_hline(y=0, line_dash="dot", line_color="white")
+                    # 핵심 차트 — 누적 PNL line (WebGL, 가장 정보 가치 큼) 즉시 렌더.
                     with results_placeholder:
                         st.markdown("### 누적 PNL 추이")
                         st.plotly_chart(fig_cum)
 
-                    fig_bar = px.bar(
-                        series, x="period", y="pnl", color="label", barmode="group",
-                        title=f"기간별 PNL — {h_freq_label}",
-                        labels={"period": "기간", "pnl": "PNL", "label": "지갑"},
-                    )
-                    fig_bar.add_hline(y=0, line_color="white")
-                    with results_placeholder:
-                        st.markdown("### 기간별 PNL")
-                        st.plotly_chart(fig_bar)
-
-                    fig_rw = px.bar(
-                        series, x="period", y="block_reward", color="label", barmode="group",
-                        title=f"블록 보상 — {h_freq_label}",
-                        labels={"period": "기간", "block_reward": "블록 보상", "label": "지갑"},
-                    )
-                    fig_sp = px.bar(
-                        series, x="period", y="item_spend", color="label", barmode="group",
-                        title=f"아이템 지출 — {h_freq_label}",
-                        labels={"period": "기간", "item_spend": "아이템 지출", "label": "지갑"},
-                    )
-                    with results_placeholder:
-                        st.markdown("### 보상 / 지출 분리")
-                        cc5, cc6 = st.columns(2)
-                        with cc5:
-                            st.plotly_chart(fig_rw)
-                        with cc6:
-                            st.plotly_chart(fig_sp)
-
-                        # ---- CSV Export ----
-                        st.markdown("### 📥 CSV 내보내기")
-                        ts_with_label = ts.copy()
-                        ts_with_label["label"] = ts_with_label.apply(_make_label, axis=1)
-
-                        ec1, ec2 = st.columns(2)
-                        with ec1:
-                            st.download_button(
-                                "📊 전체 통합 CSV (long format)",
-                                data=ts_with_label.to_csv(index=False).encode("utf-8-sig"),
-                                file_name=_ts_filename(f"timeseries_combined_{h_freq}", "csv"),
-                                mime="text/csv",
-                                help="모든 선택 지갑이 한 파일에. 엑셀 피벗테이블 만들기 좋음.",
+                        # 추가 차트들 — expander 안에 lazy 로드 (열어야만 렌더).
+                        # bar 차트는 1분 단위 × 12 지갑 × 시간 = 수만 개 bar 라 매우 느림.
+                        # 처음엔 접혀있음 — 사용자가 필요할 때만 열어서 봄.
+                        with st.expander("📊 기간별 PNL 막대 (펼쳐서 보기 — 느릴 수 있음)", expanded=False):
+                            fig_bar = px.bar(
+                                series, x="period", y="pnl", color="label", barmode="group",
+                                title=f"기간별 PNL — {h_freq_label}",
+                                labels={"period": "기간", "pnl": "PNL", "label": "지갑"},
                             )
-                        with ec2:
-                            wide_pnl = ts_with_label.pivot_table(
-                                index="period", columns="label", values="pnl", aggfunc="sum"
-                            ).fillna(0).reset_index()
-                            st.download_button(
-                                "📋 Wide CSV (period × 지갑별 PNL)",
-                                data=wide_pnl.to_csv(index=False).encode("utf-8-sig"),
-                                file_name=_ts_filename(f"timeseries_wide_pnl_{h_freq}", "csv"),
-                                mime="text/csv",
-                                help="행=기간, 열=지갑별 PNL. 엑셀 차트 그리기 좋음.",
-                            )
+                            fig_bar.add_hline(y=0, line_color="white")
+                            st.plotly_chart(fig_bar)
 
-                        st.markdown("**지갑별 개별 CSV** — 봇/유저마다 따로")
-                        unique_users = ts["user_id"].unique()
-                        n_cols = min(4, len(unique_users))
-                        if n_cols > 0:
-                            cols = st.columns(n_cols)
-                            for i, uid in enumerate(unique_users):
-                                sub = ts[ts["user_id"] == int(uid)].copy()
-                                sub_label = (
-                                    active_bots.get(int(uid))
-                                    or sub.iloc[0].get("username", "?")
-                                    or f"user_{int(uid)}"
+                        with st.expander("⛏️ 보상 / 지출 분리 (펼쳐서 보기)", expanded=False):
+                            fig_rw = px.bar(
+                                series, x="period", y="block_reward", color="label", barmode="group",
+                                title=f"블록 보상 — {h_freq_label}",
+                                labels={"period": "기간", "block_reward": "블록 보상", "label": "지갑"},
+                            )
+                            fig_sp = px.bar(
+                                series, x="period", y="item_spend", color="label", barmode="group",
+                                title=f"아이템 지출 — {h_freq_label}",
+                                labels={"period": "기간", "item_spend": "아이템 지출", "label": "지갑"},
+                            )
+                            cc5, cc6 = st.columns(2)
+                            with cc5:
+                                st.plotly_chart(fig_rw)
+                            with cc6:
+                                st.plotly_chart(fig_sp)
+
+                        # CSV 도 expander — 매번 인코딩 안 하게 (펼쳐야 인코딩).
+                        with st.expander("📥 CSV 내보내기 (펼쳐서 다운로드)", expanded=False):
+                            ts_with_label = ts.copy()
+                            ts_with_label["label"] = ts_with_label.apply(_make_label, axis=1)
+
+                            ec1, ec2 = st.columns(2)
+                            with ec1:
+                                st.download_button(
+                                    "📊 전체 통합 CSV (long format)",
+                                    data=ts_with_label.to_csv(index=False).encode("utf-8-sig"),
+                                    file_name=_ts_filename(f"timeseries_combined_{h_freq}", "csv"),
+                                    mime="text/csv",
+                                    help="모든 선택 지갑이 한 파일에. 엑셀 피벗테이블 만들기 좋음.",
                                 )
-                                with cols[i % n_cols]:
-                                    st.download_button(
-                                        f"💼 {sub_label}",
-                                        data=sub.to_csv(index=False).encode("utf-8-sig"),
-                                        file_name=_ts_filename(f"timeseries_{sub_label}_{h_freq}", "csv"),
-                                        mime="text/csv",
-                                        key=f"dl_wallet_{uid}",
-                                    )
+                            with ec2:
+                                wide_pnl = ts_with_label.pivot_table(
+                                    index="period", columns="label", values="pnl", aggfunc="sum"
+                                ).fillna(0).reset_index()
+                                st.download_button(
+                                    "📋 Wide CSV (period × 지갑별 PNL)",
+                                    data=wide_pnl.to_csv(index=False).encode("utf-8-sig"),
+                                    file_name=_ts_filename(f"timeseries_wide_pnl_{h_freq}", "csv"),
+                                    mime="text/csv",
+                                    help="행=기간, 열=지갑별 PNL. 엑셀 차트 그리기 좋음.",
+                                )
 
-                        with st.expander("시계열 원본 (전체 행)"):
-                            st.dataframe(ts_with_label, width="stretch")
+                            st.markdown("**지갑별 개별 CSV** — 봇/유저마다 따로")
+                            unique_users = ts["user_id"].unique()
+                            n_cols = min(4, len(unique_users))
+                            if n_cols > 0:
+                                cols = st.columns(n_cols)
+                                for i, uid in enumerate(unique_users):
+                                    sub = ts[ts["user_id"] == int(uid)].copy()
+                                    sub_label = (
+                                        active_bots.get(int(uid))
+                                        or sub.iloc[0].get("username", "?")
+                                        or f"user_{int(uid)}"
+                                    )
+                                    with cols[i % n_cols]:
+                                        st.download_button(
+                                            f"💼 {sub_label}",
+                                            data=sub.to_csv(index=False).encode("utf-8-sig"),
+                                            file_name=_ts_filename(f"timeseries_{sub_label}_{h_freq}", "csv"),
+                                            mime="text/csv",
+                                            key=f"dl_wallet_{uid}",
+                                        )
+
+                        with st.expander("📋 시계열 원본 (전체 행)", expanded=False):
+                            ts_with_label_view = ts.copy()
+                            ts_with_label_view["label"] = ts_with_label_view.apply(_make_label, axis=1)
+                            st.dataframe(ts_with_label_view, width="stretch")
 
                     total_elapsed = (datetime.now() - _t0).total_seconds()
                     status.update(
