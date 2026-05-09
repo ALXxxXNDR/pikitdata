@@ -46,7 +46,6 @@ from pikit_analyzer import (
     compute_per_summon_returns,
     summarize_per_summon,
     bot_state,
-    bot_api,
     list_environments,
     list_snapshot_dates,
     load_snapshot,
@@ -70,24 +69,23 @@ st.set_page_config(
 # 에 등록된 세트만 PNL picker 에 노출됨.
 
 def get_bot_sets_for_track(track: str | None) -> dict[str, dict]:
-    """현재 env(track) 에 배포된 봇 세트 목록.
+    """모든 봇 세트 목록 — bot_state.json 에서 직접 로드.
 
-    소스 우선순위:
-      1. PIKIT_BOT_API_URL 환경변수 설정돼 있고 API 응답 OK → API 라이브 데이터 사용
-      2. fallback: 로컬 bot_state.json (cache volume)
+    track 파라미터는 호환성 위해 받지만 무시 (모든 환경에서 모든 세트 표시).
+    사용자가 PNL picker 에서 직접 선택.
 
     반환: {세트이름: {"wallets": ["0x...", ...]}, ...}
     """
-    if not track:
-        return {}
-    # 1) API 모드 시도
-    if bot_api.is_configured():
-        api_state = bot_api.get_state()
-        if api_state is not None:
-            return bot_api.get_pnl_compatible_sets(api_state, track)
-    # 2) Fallback: 로컬 파일
     state = bot_state.load_state()
-    return bot_state.get_pnl_compatible_sets(state, track)
+    out: dict[str, dict] = {}
+    for s in state.get("sets", []):
+        wallets = [
+            b.get("address", "").lower()
+            for b in s.get("bots", [])
+            if b.get("address")
+        ]
+        out[s.get("name", s.get("id", "?"))] = {"wallets": wallets}
+    return out
 
 
 def resolve_bot_set(bot_sets: dict[str, dict], set_name: str, pnl_df) -> dict[int, str]:
@@ -571,7 +569,6 @@ tab_labels = [
 ]
 if not PUBLIC_MODE:
     tab_labels.append("📦 원본 데이터")
-tab_labels.append("🤖 봇 관리")  # 항상 마지막 (rightmost)
 
 _tabs = st.tabs(tab_labels)
 tab_users = _tabs[0]
@@ -581,12 +578,7 @@ tab_hourly = _tabs[3]
 tab_user_detail = _tabs[4]
 tab_items = _tabs[5]
 tab_blocks = _tabs[6]
-if not PUBLIC_MODE:
-    tab_data = _tabs[7]
-    tab_bot_mgmt = _tabs[8]
-else:
-    tab_data = None
-    tab_bot_mgmt = _tabs[7]
+tab_data = _tabs[7] if not PUBLIC_MODE else None
 
 
 # ----------------------------------------------------------------------------
@@ -1248,16 +1240,139 @@ with tab_hourly:
         progress_slot.empty()
         st.info("표시할 유저가 없습니다.")
     else:
-        # 봇 세트 — 봇 관리 탭에서 만든 세트 중 현재 env(track) 에 배포된 것만.
-        track_for_bots = selected_env or "beta"
-        bot_sets_for_track = get_bot_sets_for_track(track_for_bots)
+        # ───────────────────────────────────────────────────────────
+        # 봇 세트 관리 — 모달로 paste 기반 CRUD
+        # ───────────────────────────────────────────────────────────
+        @st.dialog("📋 봇 세트 관리", width="large")
+        def _set_management_dialog():
+            mgmt_state = bot_state.load_state()
+            current_sets = mgmt_state.get("sets", [])
+
+            st.markdown("### 현재 등록된 세트")
+            if not current_sets:
+                st.caption("아직 등록된 세트가 없습니다. 아래에서 추가.")
+            else:
+                for s in current_sets:
+                    sc1, sc2, sc3 = st.columns([4, 1, 1])
+                    n_bots = len(s.get("bots", []))
+                    with sc1:
+                        with st.expander(f"**{s['name']}** — {n_bots}개 지갑"):
+                            lines = "\n".join(
+                                f"{b.get('label', '?')}\t{b.get('address', '?')}"
+                                for b in s.get("bots", [])
+                            )
+                            st.code(lines, language="text")
+                    with sc2:
+                        # 빈 칸 (정렬용)
+                        st.write("")
+                    with sc3:
+                        if st.button("🗑️", key=f"del_{s['id']}", help=f"세트 '{s['name']}' 삭제"):
+                            bot_state.delete_set(mgmt_state, s["id"])
+                            bot_state.save_state(mgmt_state)
+                            st.success(f"세트 '{s['name']}' 삭제됨")
+                            st.rerun()
+
+            st.markdown("---")
+            st.markdown("### 새 세트 추가")
+            st.caption(
+                "한 줄에 `라벨<탭/공백>0x주소` 형식으로 붙여넣기. "
+                "예: `beta2-bot-01    0x496B...`"
+            )
+
+            new_set_name = st.text_input(
+                "세트 이름",
+                value="",
+                placeholder="예: beta2, alpha-set, my-runners",
+                key="modal_new_set_name",
+            )
+            paste_text = st.text_area(
+                "지갑 주소들 (한 줄에 하나)",
+                value="",
+                height=300,
+                placeholder=(
+                    "beta2-bot-01    0x496B4e12C108340eCEeF891C6c1afc1e5353a524\n"
+                    "beta2-bot-02    0xcC4c18dff715a7Be5178D01CD133B6CD22E3fBb2\n"
+                    "..."
+                ),
+                key="modal_paste_addrs",
+            )
+
+            if st.button("➕ 세트 만들기", type="primary", use_container_width=True):
+                if not new_set_name.strip():
+                    st.error("❌ 세트 이름을 입력해주세요.")
+                elif not paste_text.strip():
+                    st.error("❌ 지갑 주소를 한 줄 이상 붙여넣어주세요.")
+                else:
+                    bots_parsed: list[dict] = []
+                    skipped: list[str] = []
+                    for line in paste_text.strip().split("\n"):
+                        line = line.strip()
+                        if not line or line.startswith("#"):
+                            continue
+                        parts = line.split(None, 1)  # 공백/탭 어떤 것이든 첫 번째 분리
+                        if len(parts) != 2:
+                            skipped.append(line)
+                            continue
+                        label, addr = parts[0].strip(), parts[1].strip()
+                        if not addr.startswith("0x") or len(addr) != 42:
+                            skipped.append(line)
+                            continue
+                        bots_parsed.append({"label": label, "address": addr})
+
+                    # 중복 세트 ID 처리
+                    sid_base = new_set_name.strip().lower().replace(" ", "_")
+                    sid = sid_base
+                    suffix = 2
+                    existing_ids = {s["id"] for s in current_sets}
+                    while sid in existing_ids:
+                        sid = f"{sid_base}_{suffix}"
+                        suffix += 1
+
+                    if not bots_parsed:
+                        st.error(
+                            f"❌ 유효한 (라벨 + 0x주소) 줄을 찾지 못했습니다. "
+                            f"형식: `라벨<탭/공백>0x주소`"
+                        )
+                    else:
+                        new_set = {
+                            "id": sid,
+                            "name": new_set_name.strip(),
+                            "bots": [
+                                {
+                                    "id": f"{sid}:{b['label']}",
+                                    "slot": i + 1,
+                                    "label": b["label"],
+                                    "address": b["address"],
+                                    "strategy": "manual",
+                                }
+                                for i, b in enumerate(bots_parsed)
+                            ],
+                        }
+                        mgmt_state.setdefault("sets", []).append(new_set)
+                        ok = bot_state.save_state(mgmt_state)
+                        if ok:
+                            msg = f"✅ 세트 '{new_set_name.strip()}' 생성됨 — {len(bots_parsed)}개 지갑"
+                            if skipped:
+                                msg += f" (무시된 줄 {len(skipped)}개)"
+                            st.success(msg)
+                            st.rerun()
+                        else:
+                            st.error("❌ 저장 실패 — 디스크 권한 확인 필요")
+
+        # 헤더 + 세트 관리 버튼
+        h1, h2 = st.columns([4, 1])
+        with h1:
+            st.caption("🎯 봇 세트 선택 — PNL 분석에 사용할 지갑 묶음")
+        with h2:
+            if st.button("📋 세트 관리", use_container_width=True, key="open_set_mgmt"):
+                _set_management_dialog()
+
+        bot_sets_for_track = get_bot_sets_for_track(selected_env)
         set_names = list(bot_sets_for_track.keys())
 
         if not set_names:
             st.info(
-                f"📭 **{track_for_bots.upper()}** 트랙에 배포된 봇 세트가 없습니다.\n\n"
-                f"오른쪽 끝의 **🤖 봇 관리** 탭에서 세트를 만들고 이 트랙에 배포하면 "
-                f"여기 자동으로 등장합니다."
+                "📭 등록된 봇 세트가 없습니다. 위의 **📋 세트 관리** 버튼을 눌러 새 세트를 추가하세요."
             )
             selected_set = None
             active_bots = {}
@@ -1267,7 +1382,7 @@ with tab_hourly:
                 options=set_names,
                 index=0,
                 horizontal=True,
-                help="🤖 봇 관리 탭에서 만든 세트 중 현재 트랙에 배포된 것만 표시.",
+                help="📋 세트 관리에서 만든 세트 중 선택. 새 세트 추가/삭제는 위 버튼.",
                 key="hourly_bot_set",
             )
             active_bots = resolve_bot_set(bot_sets_for_track, selected_set, users_for_picker)
@@ -2108,312 +2223,3 @@ if tab_data is not None:
     )
 
 
-# -------- 🤖 봇 관리 탭 (rightmost) --------
-with tab_bot_mgmt:
-    st.subheader(f"🤖 봇 관리 — {selected_env.upper() if selected_env else 'BETA'} 트랙")
-
-    # ---- 모드 결정: API live vs file local ----
-    _api_mode = bot_api.is_configured()
-    if _api_mode:
-        _api_ok, _api_msg = bot_api.health_check()
-    else:
-        _api_ok, _api_msg = False, ""
-
-    _mode_color = "#4caf50" if _api_ok else ("#ff9800" if _api_mode else "#9e9e9e")
-    _mode_label = (
-        f"🟢 LIVE — PIKITbot API ({bot_api.API_URL})"
-        if _api_ok
-        else (f"🟡 API 연결 실패 — file fallback ({_api_msg})" if _api_mode else "⚪ 로컬 파일 모드 (PIKIT_BOT_API_URL 미설정)")
-    )
-    st.markdown(
-        f"<div style='padding:6px 10px;background:{_mode_color}22;border-left:3px solid {_mode_color};"
-        f"border-radius:4px;margin:0 0 12px;font-size:13px;'>{_mode_label}</div>",
-        unsafe_allow_html=True,
-    )
-    st.write(
-        "현재 트랙 (env) 에 배포된 봇 세트를 보고/추가/관리합니다. "
-        "여기서 만든 세트는 **시간대별 PNL** 탭의 봇 세트 라디오에 자동 등장합니다."
-    )
-
-    _track = selected_env or "beta"
-
-    # ---- 상태 로드 — API 우선, fallback file ----
-    if _api_ok:
-        _state_remote = bot_api.get_state()
-        if _state_remote is not None:
-            _bot_state = _state_remote
-        else:
-            _bot_state = bot_state.load_state()
-    else:
-        _bot_state = bot_state.load_state()
-
-    _track_sets = bot_state.list_sets_for_track(_bot_state, _track)
-    _all_sets = bot_state.list_all_sets(_bot_state)
-    _track_set_ids = set(bot_state.get_track_setIds(_bot_state, _track))
-
-    # ---- API 모드: 트랙 health + 시작/중지 컨트롤 ----
-    if _api_ok:
-        with st.container():
-            health = bot_api.get_track_health(_track)
-            track_health = (health or {}).get(_track) or health  # 형식 변동 보호
-            if track_health:
-                process_alive = track_health.get("processAlive", False)
-                bots = track_health.get("bots", []) or []
-                green_count = sum(1 for b in bots if b.get("status") == "green")
-                yellow_count = sum(1 for b in bots if b.get("status") == "yellow")
-                red_count = sum(1 for b in bots if b.get("status") == "red")
-                health_summary = f"🟢 {green_count}  🟡 {yellow_count}  🔴 {red_count}"
-            else:
-                process_alive = False
-                health_summary = "(데이터 없음)"
-
-            hc1, hc2, hc3 = st.columns([3, 1, 1])
-            with hc1:
-                st.markdown(
-                    f"**프로세스**: {'🟢 실행 중' if process_alive else '⚫ 중지'} "
-                    f"· **봇 상태**: {health_summary}"
-                )
-            with hc2:
-                if st.button(f"▶ {_track.upper()} 시작", type="primary", use_container_width=True, disabled=process_alive):
-                    with st.spinner(f"{_track} 트랙 시작 중 (SSH 핸드쉐이크)…"):
-                        ok, msg = bot_api.start_track(_track)
-                    if ok:
-                        st.success(f"✅ {_track.upper()} 시작됨")
-                        st.rerun()
-                    else:
-                        st.error(f"❌ 시작 실패: {msg}")
-            with hc3:
-                if st.button(f"⏹ {_track.upper()} 중지", use_container_width=True, disabled=not process_alive):
-                    with st.spinner(f"{_track} 트랙 중지 중…"):
-                        ok, msg = bot_api.stop_track(_track)
-                    if ok:
-                        st.success(f"✅ {_track.upper()} 중지됨")
-                        st.rerun()
-                    else:
-                        st.error(f"❌ 중지 실패: {msg}")
-
-    # ---- 1. 새 세트 만들기 ----
-    with st.expander("➕ 새 봇 세트 생성", expanded=not _track_sets):
-        st.write(
-            f"이름을 정하고 12개 지갑을 자동 생성합니다. "
-            f"**privateKey 는 한 번만 화면에 표시되고 다시 못 봅니다 — 꼭 다운로드/복사해두세요.**"
-        )
-        col_a, col_b = st.columns([3, 2])
-        with col_a:
-            new_set_name = st.text_input(
-                "세트 이름",
-                value="",
-                placeholder=f"예: {_track}3, alpha, 2026-05-runner …",
-                key="new_set_name",
-            )
-        with col_b:
-            assign_to_track = st.checkbox(
-                f"바로 {_track.upper()} 트랙에 배포",
-                value=True,
-                help="체크하면 시간대별 PNL 탭에서 즉시 사용 가능. 미체크면 미배포 상태로 둠.",
-                key="new_set_assign",
-            )
-        if st.button("🎲 12개 지갑 자동 생성 + 세트 만들기", type="primary", use_container_width=True):
-            if not new_set_name.strip():
-                st.error("❌ 세트 이름을 입력해주세요.")
-            elif _api_ok:
-                # API 모드 — PIKITbot 서버에 위임 (privateKey 는 서버 state.json 에 저장됨)
-                with st.spinner("PIKITbot 서버에서 12개 지갑 생성 중…"):
-                    ok, payload = bot_api.create_set_auto(new_set_name.strip())
-                if not ok:
-                    st.error(f"❌ 세트 생성 실패: {payload}")
-                else:
-                    new_set_id = payload.get("id") or payload.get("setId") or new_set_name.strip()
-                    if assign_to_track:
-                        # 트랙 배포 — 기존 setIds 에 추가
-                        existing_ids = list(set(bot_state.get_track_setIds(_bot_state, _track)) | {new_set_id})
-                        ok2, msg2 = bot_api.update_deployment(_track, existing_ids)
-                        if ok2:
-                            st.success(f"✅ 세트 **{new_set_name}** 생성 + {_track.upper()} 배포 완료")
-                        else:
-                            st.warning(f"세트 생성 OK, 배포 실패: {msg2} — 수동 배포 필요")
-                    else:
-                        st.success(f"✅ 세트 **{new_set_name}** 생성됨 (미배포)")
-                    st.info(
-                        "🔐 privateKey 는 PIKITbot 서버의 state.json 에 저장되었습니다. "
-                        "Mac/PIKITbot 의 기존 흐름으로 봇 운영 가능."
-                    )
-                    st.rerun()
-            else:
-                # File 모드 — 로컬 생성
-                try:
-                    new_set, wallets = bot_state.create_new_set(
-                        _bot_state,
-                        name=new_set_name.strip(),
-                        track=_track if assign_to_track else None,
-                    )
-                    saved = bot_state.save_state(_bot_state)
-                    if saved:
-                        st.success(
-                            f"✅ 세트 **{new_set['name']}** 생성 완료 — 12개 지갑. "
-                            + (f"{_track.upper()} 트랙에 배포됨." if assign_to_track else "미배포 (수동 배포 필요).")
-                        )
-                        st.warning(
-                            "⚠️ **아래 privateKey 는 지금 한 번만 표시됩니다.** "
-                            "복사 또는 CSV 다운로드 후 안전한 곳에 보관하세요. "
-                            "절대 commit 하지 마세요."
-                        )
-                        wallet_lines = [f"{b['label']}\t{b['address']}\t{w['privateKey']}"
-                                        for b, w in zip(new_set["bots"], wallets)]
-                        wallet_csv = "label,address,privateKey\n" + "\n".join(
-                            f"{b['label']},{b['address']},{w['privateKey']}"
-                            for b, w in zip(new_set["bots"], wallets)
-                        )
-                        st.download_button(
-                            "📥 privateKey 포함 CSV 다운로드 (한 번만)",
-                            data=wallet_csv.encode("utf-8"),
-                            file_name=f"{new_set['name']}_wallets.csv",
-                            mime="text/csv",
-                            type="primary",
-                        )
-                        with st.expander("화면에서 보기 (스크린샷 OK)", expanded=False):
-                            for line in wallet_lines:
-                                st.code(line)
-                        st.info("페이지를 새로고침하면 위 privateKey 는 사라집니다.")
-                    else:
-                        st.error("❌ bot_state.json 저장 실패 — 권한 또는 디스크 확인 필요.")
-                except Exception as e:
-                    st.error(f"❌ 세트 생성 실패: {e}")
-
-    st.markdown("---")
-
-    # ---- 2. 현재 트랙의 세트 목록 ----
-    if not _track_sets:
-        st.info(f"📭 **{_track.upper()}** 트랙에 배포된 세트가 없습니다. 위에서 새 세트를 만들거나, 아래의 미배포 세트를 배포하세요.")
-    else:
-        st.markdown(f"### 📋 {_track.upper()} 트랙의 활성 세트")
-        for s in _track_sets:
-            with st.expander(f"**{s['name']}** — {len(s['bots'])}개 봇  (id: `{s['id']}`)", expanded=False):
-                # 트랙 배포 토글
-                col_x, col_y = st.columns([2, 1])
-                with col_x:
-                    keep_deployed = st.checkbox(
-                        f"{_track.upper()} 트랙에 배포 유지",
-                        value=True,
-                        key=f"deploy_{s['id']}_{_track}",
-                    )
-                    if not keep_deployed:
-                        if _api_ok:
-                            new_ids = [x for x in bot_state.get_track_setIds(_bot_state, _track) if x != s["id"]]
-                            ok_d, msg_d = bot_api.update_deployment(_track, new_ids)
-                            if ok_d:
-                                st.success(f"{s['name']} → {_track.upper()} 배포 해제")
-                            else:
-                                st.error(f"❌ 배포 해제 실패: {msg_d}")
-                        else:
-                            bot_state.update_set_track_assignment(_bot_state, s["id"], _track, False)
-                            bot_state.save_state(_bot_state)
-                        st.rerun()
-                with col_y:
-                    if st.button("🗑️ 세트 영구 삭제", key=f"del_{s['id']}", type="secondary"):
-                        if _api_ok:
-                            st.error(
-                                "API 모드에서는 세트 삭제 endpoint 가 PIKITbot 에 없습니다. "
-                                "PIKITbot Mac 에서 직접 state.json 편집 또는 dashboard UI 사용."
-                            )
-                        else:
-                            if bot_state.delete_set(_bot_state, s["id"]):
-                                bot_state.save_state(_bot_state)
-                                st.success(f"세트 {s['name']} 삭제됨")
-                                st.rerun()
-
-                # 봇 목록 + 전략 편집
-                bots_df = pd.DataFrame([
-                    {
-                        "label": b["label"],
-                        "address": b["address"],
-                        "strategy": b.get("strategy", "pickaxe-1"),
-                    }
-                    for b in s["bots"]
-                ])
-                edited = st.data_editor(
-                    bots_df,
-                    column_config={
-                        "label": st.column_config.TextColumn("라벨", disabled=True),
-                        "address": st.column_config.TextColumn("지갑 주소", disabled=True),
-                        "strategy": st.column_config.SelectboxColumn(
-                            "전략",
-                            options=bot_state.AVAILABLE_STRATEGIES,
-                            required=True,
-                        ),
-                    },
-                    hide_index=True,
-                    width="stretch",
-                    key=f"editor_{s['id']}",
-                )
-                # 전략 변경 시 저장
-                if not edited.equals(bots_df):
-                    if st.button(f"💾 '{s['name']}' 전략 변경 저장", key=f"save_{s['id']}", type="primary"):
-                        new_strategies = [r.strategy for r in edited.itertuples(index=False)]
-                        if _api_ok:
-                            ok_s, msg_s = bot_api.update_strategies(s["id"], new_strategies)
-                            if ok_s:
-                                st.success("전략 저장 완료 (PIKITbot 서버)")
-                                st.rerun()
-                            else:
-                                st.error(f"❌ 저장 실패: {msg_s}")
-                        else:
-                            for orig_bot, new_strategy in zip(s["bots"], new_strategies):
-                                if orig_bot.get("strategy") != new_strategy:
-                                    bot_state.update_bot_strategy(
-                                        _bot_state, s["id"], orig_bot["id"], new_strategy
-                                    )
-                            bot_state.save_state(_bot_state)
-                            st.success("전략 저장 완료 (로컬)")
-                            st.rerun()
-
-                # 주소 export
-                addresses_text = "\n".join(b["address"] for b in s["bots"])
-                st.download_button(
-                    f"📋 {s['name']} 지갑 주소 export (TXT)",
-                    data=addresses_text.encode("utf-8"),
-                    file_name=f"{s['name']}_addresses.txt",
-                    mime="text/plain",
-                    key=f"export_{s['id']}",
-                )
-
-    # ---- 3. 미배포 세트 (다른 트랙 또는 어디에도 안 묶인 것) ----
-    _unassigned_sets = [s for s in _all_sets if s["id"] not in _track_set_ids]
-    if _unassigned_sets:
-        st.markdown("---")
-        st.markdown(f"### 📦 다른 트랙 / 미배포 세트 ({len(_unassigned_sets)}개)")
-        st.caption(f"아래 세트들은 현재 {_track.upper()} 트랙에 배포되어 있지 않습니다. 배포하면 PNL 탭에 등장.")
-        for s in _unassigned_sets:
-            other_tracks = []
-            for t, dep in _bot_state.get("deployments", {}).items():
-                if s["id"] in dep.get("setIds", []):
-                    other_tracks.append(t.upper())
-            label = f"**{s['name']}** — {len(s['bots'])}개 봇"
-            if other_tracks:
-                label += f"  (현재 배포: {', '.join(other_tracks)})"
-            else:
-                label += "  (어디에도 미배포)"
-
-            cc_a, cc_b = st.columns([5, 1])
-            with cc_a:
-                st.markdown(label)
-            with cc_b:
-                if st.button(f"📥 {_track.upper()} 에 배포", key=f"deploy_to_{s['id']}_{_track}"):
-                    if _api_ok:
-                        new_ids = list(set(bot_state.get_track_setIds(_bot_state, _track)) | {s["id"]})
-                        ok_d, msg_d = bot_api.update_deployment(_track, new_ids)
-                        if ok_d:
-                            st.success(f"{s['name']} → {_track.upper()} 배포")
-                            st.rerun()
-                        else:
-                            st.error(f"❌ 배포 실패: {msg_d}")
-                    else:
-                        bot_state.update_set_track_assignment(_bot_state, s["id"], _track, True)
-                        bot_state.save_state(_bot_state)
-                        st.success(f"{s['name']} → {_track.upper()} 배포")
-                        st.rerun()
-
-    st.markdown("---")
-    st.caption(
-        f"📁 상태 저장 위치: `{bot_state.WRITABLE_PATH}` (named volume — 컨테이너 재빌드 후에도 보존)"
-    )
