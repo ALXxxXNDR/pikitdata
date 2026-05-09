@@ -64,8 +64,34 @@ def _state_template_path() -> Path:
     return Path(__file__).resolve().parent.parent / "bot_state.json"
 
 
-WRITABLE_PATH = _state_writable_path()
 TEMPLATE_PATH = _state_template_path()
+
+
+# 매 호출마다 재평가 — 컨테이너 부팅 시점 권한과 다를 수 있어 캐시 안 함.
+# host 의 chown 변경이 즉시 반영됨.
+def _writable_path() -> Path:
+    return _state_writable_path()
+
+
+# Backward compat — 옛 코드가 WRITABLE_PATH 라는 이름 참조하면 함수 호출과 동등.
+class _PathProxy:
+    def __getattr__(self, name):
+        return getattr(_writable_path(), name)
+
+    def __fspath__(self):
+        return str(_writable_path())
+
+    def __truediv__(self, other):
+        return _writable_path() / other
+
+    def __str__(self):
+        return str(_writable_path())
+
+    def __repr__(self):
+        return repr(_writable_path())
+
+
+WRITABLE_PATH = _PathProxy()
 
 
 # 트랙 (env) 기본 설정 — 지정되지 않은 env 의 deployments 자동 생성용
