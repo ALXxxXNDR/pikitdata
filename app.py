@@ -1634,6 +1634,21 @@ with tab_hourly:
                             return f"🤖 {active_bots[uid]}"
                         return f"#{uid} {r['username'] or ''}".strip()
 
+                    def _vectorize_labels(df):
+                        """apply(axis=1) 의 row-by-row 회피 — 8k 행에서 200ms → 5ms."""
+                        if df.empty:
+                            return pd.Series([], dtype=object)
+                        uid_arr = df["user_id"].astype(int).to_numpy()
+                        is_bot_arr = pd.Series(uid_arr).isin(active_bots.keys()).to_numpy()
+                        bot_labels_np = np.array(
+                            [f"🤖 {active_bots[int(u)]}" if int(u) in active_bots else "" for u in uid_arr]
+                        )
+                        username_col = df.get("username", pd.Series([""] * len(df))).fillna("")
+                        user_labels = (
+                            "#" + df["user_id"].astype(str) + " " + username_col
+                        ).str.strip().to_numpy()
+                        return np.where(is_bot_arr, bot_labels_np, user_labels)
+
                     if view_mode == "선택 지갑 합산":
                         grouped = (
                             ts.groupby("period")
@@ -1652,7 +1667,7 @@ with tab_hourly:
                         series = grouped
                     else:
                         series = ts.copy()
-                        series["label"] = series.apply(_make_label, axis=1)
+                        series["label"] = _vectorize_labels(series)
                     with results_placeholder:
                         total_reward = float(series["block_reward"].sum())
                         total_spend = float(series["item_spend"].sum())
@@ -1717,7 +1732,7 @@ with tab_hourly:
                         # CSV 도 expander — 매번 인코딩 안 하게 (펼쳐야 인코딩).
                         with st.expander("📥 CSV 내보내기 (펼쳐서 다운로드)", expanded=False):
                             ts_with_label = ts.copy()
-                            ts_with_label["label"] = ts_with_label.apply(_make_label, axis=1)
+                            ts_with_label["label"] = _vectorize_labels(ts_with_label)
 
                             ec1, ec2 = st.columns(2)
                             with ec1:
@@ -1763,7 +1778,7 @@ with tab_hourly:
 
                         with st.expander("📋 시계열 원본 (전체 행)", expanded=False):
                             ts_with_label_view = ts.copy()
-                            ts_with_label_view["label"] = ts_with_label_view.apply(_make_label, axis=1)
+                            ts_with_label_view["label"] = _vectorize_labels(ts_with_label_view)
                             st.dataframe(ts_with_label_view, width="stretch")
 
                     total_elapsed = (datetime.now() - _t0).total_seconds()
