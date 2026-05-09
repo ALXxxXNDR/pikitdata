@@ -144,6 +144,49 @@ def save_state(state: dict[str, Any]) -> bool:
         return False
 
 
+def save_state_with_diag(state: dict[str, Any]) -> tuple[bool, str]:
+    """save_state + 진단 메시지. 실패 시 정확한 이유."""
+    try:
+        WRITABLE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    except PermissionError as e:
+        return False, f"PermissionError on mkdir({WRITABLE_PATH.parent}): {e}"
+    except OSError as e:
+        return False, f"OSError on mkdir({WRITABLE_PATH.parent}): {e}"
+
+    # 쓰기 권한 빠르게 사전 진단
+    test_target = WRITABLE_PATH.parent / ".write_test"
+    try:
+        test_target.write_text("ok", encoding="utf-8")
+        test_target.unlink()
+    except PermissionError as e:
+        import os
+        try:
+            stat = os.stat(WRITABLE_PATH.parent)
+            owner = f"uid={stat.st_uid} gid={stat.st_gid} mode={oct(stat.st_mode)[-3:]}"
+        except OSError:
+            owner = "?"
+        try:
+            cur_uid = os.geteuid()
+        except AttributeError:
+            cur_uid = "?"
+        return False, (
+            f"쓰기 권한 없음: {WRITABLE_PATH.parent} ({owner}), 현재 프로세스 uid={cur_uid}. "
+            f"named volume 의 owner 가 root 라 컨테이너의 pikit (uid 1026) 가 못 씀. "
+            f"NAS 에서 sudo chown -R 1026:1026 /volume1/@docker/volumes/dataanal_pikit_cache/_data"
+        )
+    except OSError as e:
+        return False, f"OSError on write test: {e}"
+
+    try:
+        tmp = WRITABLE_PATH.with_suffix(".json.tmp")
+        with tmp.open("w") as f:
+            json.dump(state, f, indent=2)
+        tmp.replace(WRITABLE_PATH)
+        return True, "OK"
+    except OSError as e:
+        return False, f"OSError on save: {e}"
+
+
 # ---------------------------------------------------------------------------
 # 세트 / 트랙 조회
 # ---------------------------------------------------------------------------

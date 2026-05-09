@@ -1349,7 +1349,7 @@ with tab_hourly:
                             ],
                         }
                         mgmt_state.setdefault("sets", []).append(new_set)
-                        ok = bot_state.save_state(mgmt_state)
+                        ok, diag_msg = bot_state.save_state_with_diag(mgmt_state)
                         if ok:
                             msg = f"✅ 세트 '{new_set_name.strip()}' 생성됨 — {len(bots_parsed)}개 지갑"
                             if skipped:
@@ -1357,7 +1357,7 @@ with tab_hourly:
                             st.success(msg)
                             st.rerun()
                         else:
-                            st.error("❌ 저장 실패 — 디스크 권한 확인 필요")
+                            st.error(f"❌ 저장 실패\n\n{diag_msg}")
 
         # 헤더 + 세트 관리 버튼
         h1, h2 = st.columns([4, 1])
