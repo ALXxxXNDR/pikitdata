@@ -6,8 +6,19 @@
 
 실행:
   streamlit run pikit_vault/app.py --server.port 8502
+
+Streamlit 이 스크립트의 부모 폴더만 sys.path 에 넣으므로 (pikit_vault/),
+패키지 자체를 못 찾는 문제 회피용으로 /app 을 직접 추가.
 """
 from __future__ import annotations
+
+import os
+import sys
+
+# pikit_vault 패키지를 절대 import 가능하게 — 스크립트 부모의 부모 (= /app) 를 추가.
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 import time
 from collections import defaultdict
