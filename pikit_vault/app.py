@@ -225,24 +225,41 @@ def render_detail(key: str, w: dict):
         st.info("기간 내 거래 없음")
         return
 
-    # PNL 계산 (USD 기준, 토큰만 — USDSC 등 stablecoin/exchange_rate 있는 토큰)
-    df["usd_signed"] = df.apply(
-        lambda r: (r["usd"] or 0) * (1 if r["direction"] == "in" else -1 if r["direction"] == "out" else 0),
-        axis=1,
-    )
-    df["value_signed"] = df.apply(
-        lambda r: r["value"] * (1 if r["direction"] == "in" else -1 if r["direction"] == "out" else 0),
-        axis=1,
-    )
+    # PNL 모드 — 지갑 목적에 따라 계산식이 다름.
+    # income: 수익 계정. PNL = in - out (양수=수익)
+    # treasury: 비용 계정. PNL = -out (음수=내 돈 지출됨)
+    pnl_mode = wallet.get("pnl_mode", "income")
 
     total_in_usd = df.loc[df["direction"] == "in", "usd"].fillna(0).sum()
     total_out_usd = df.loc[df["direction"] == "out", "usd"].fillna(0).sum()
-    net_usd = total_in_usd - total_out_usd
+
+    if pnl_mode == "treasury":
+        # 비용 계정: 충전(in)은 owner 가 자기 돈 넣은 것 = PNL 영향 0,
+        # 지급(out)만 owner 입장에서 손실로 잡힘.
+        pnl_usd = -total_out_usd
+        in_label = "총 충전 (입금)"
+        out_label = "총 지급 (리워드)"
+        pnl_label = "손익 (Owner PNL)"
+        # 시계열 PNL 누적: 지급액만 음수로 누적.
+        df["usd_signed"] = df.apply(
+            lambda r: -(r["usd"] or 0) if r["direction"] == "out" else 0,
+            axis=1,
+        )
+    else:
+        # 수익 계정: in - out = 수익
+        pnl_usd = total_in_usd - total_out_usd
+        in_label = "입금 USD"
+        out_label = "출금 USD"
+        pnl_label = "순 PNL"
+        df["usd_signed"] = df.apply(
+            lambda r: (r["usd"] or 0) * (1 if r["direction"] == "in" else -1 if r["direction"] == "out" else 0),
+            axis=1,
+        )
 
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("입금 USD", f"${total_in_usd:,.2f}", f"{(df['direction']=='in').sum()}건")
-    m2.metric("출금 USD", f"${total_out_usd:,.2f}", f"{(df['direction']=='out').sum()}건")
-    m3.metric("순 PNL", f"${net_usd:,.2f}")
+    m1.metric(in_label, f"${total_in_usd:,.2f}", f"{(df['direction']=='in').sum()}건")
+    m2.metric(out_label, f"${total_out_usd:,.2f}", f"{(df['direction']=='out').sum()}건")
+    m3.metric(pnl_label, f"${pnl_usd:,.2f}")
     m4.metric("거래 수", f"{len(df):,}건")
 
     # 카운터파티 집계
@@ -296,23 +313,30 @@ def render_detail(key: str, w: dict):
         df_ts["bucket"] = df_ts["timestamp"].dt.floor("D")
         bin_label = "일자"
 
+    # 입금/출금 은 모드 무관하게 raw 합계 — PNL 만 mode 별로 다름 (usd_signed)
+    df_ts["usd_in"] = df_ts.apply(
+        lambda r: (r["usd"] or 0) if r["direction"] == "in" else 0, axis=1,
+    )
+    df_ts["usd_out"] = df_ts.apply(
+        lambda r: (r["usd"] or 0) if r["direction"] == "out" else 0, axis=1,
+    )
     agg = (
         df_ts.groupby("bucket")
-        .agg(입금=("usd_signed", lambda x: x[x > 0].sum()),
-             출금=("usd_signed", lambda x: -x[x < 0].sum()),
-             순=("usd_signed", "sum"))
+        .agg(입금=("usd_in", "sum"),
+             출금=("usd_out", "sum"),
+             PNL=("usd_signed", "sum"))
         .reset_index()
         .sort_values("bucket")
     )
-    agg["누적"] = agg["순"].cumsum()
+    agg["누적PNL"] = agg["PNL"].cumsum()
 
     if agg.empty:
         st.info("시계열 데이터 없음")
     else:
-        st.line_chart(agg.set_index("bucket")[["누적"]])
+        st.line_chart(agg.set_index("bucket")[["누적PNL"]])
         with st.expander(f"{bin_label}별 상세", expanded=False):
             display = agg.copy()
-            display.columns = [bin_label, "입금($)", "출금($)", "순($)", "누적($)"]
+            display.columns = [bin_label, "입금($)", "출금($)", "PNL($)", "누적PNL($)"]
             for c in display.columns[1:]:
                 display[c] = display[c].round(2)
             st.dataframe(display, use_container_width=True, hide_index=True)

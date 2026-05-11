@@ -21,6 +21,8 @@ WALLETS = {
         "alert_threshold_usd": None,  # 알림 없음
         "color": "#4caf50",  # 초록
         "icon": "💰",
+        # PNL 모드: income = "수익 - 비용" (양수가 좋음). 들어온 돈은 수익.
+        "pnl_mode": "income",
     },
     "reward_vault": {
         "name": "유저 리워드 Vault",
@@ -29,6 +31,9 @@ WALLETS = {
         "alert_threshold_usd": 300,  # $300 이하 시 알림
         "color": "#f5b800",  # 황금
         "icon": "🎁",
+        # PNL 모드: treasury = "운영 비용 계정" (음수가 정상). 들어온 돈은 충전,
+        # 나간 돈은 리워드 지급액. owner PNL = -지급액.
+        "pnl_mode": "treasury",
     },
 }
 
