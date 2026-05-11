@@ -16,8 +16,8 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 import streamlit as st
 
-from .config import ALERT_EMAIL_TO, WALLETS, is_smtp_configured
-from .soneium_client import (
+from pikit_vault.config import ALERT_EMAIL_TO, WALLETS, is_smtp_configured
+from pikit_vault.soneium_client import (
     get_combined_history,
     get_total_usd,
 )
