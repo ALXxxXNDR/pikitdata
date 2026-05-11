@@ -282,23 +282,30 @@ def render_detail(key: str, w: dict):
         .head(20)
     )
 
-    tab_in, tab_out = st.tabs([f"📥 입금처 ({len(cp_in)}개)", f"📤 출금처 ({len(cp_out)}개)"])
-    with tab_in:
-        if cp_in.empty:
-            st.info("입금 없음")
+    # 탭 순서 — 모드별로 디폴트 (먼저 보이는) 탭을 다르게.
+    # treasury (Vault): 지급(출금)이 메인 활동 → 출금처 먼저
+    # income (운영 수익): 입금이 메인 활동 → 입금처 먼저
+    def _render_cp(df_cp: pd.DataFrame, empty_msg: str) -> None:
+        if df_cp.empty:
+            st.info(empty_msg)
         else:
-            df_show = cp_in.reset_index()
+            df_show = df_cp.reset_index()
             df_show["USD합계"] = df_show["USD합계"].round(2)
             df_show["합계"] = df_show["합계"].round(4)
             st.dataframe(df_show, use_container_width=True, hide_index=True)
+
+    in_tab_label = f"📥 입금처 ({len(cp_in)}개)"
+    out_tab_label = f"📤 출금처 ({len(cp_out)}개)"
+
+    if pnl_mode == "treasury":
+        tab_out, tab_in = st.tabs([out_tab_label, in_tab_label])
+    else:
+        tab_in, tab_out = st.tabs([in_tab_label, out_tab_label])
+
     with tab_out:
-        if cp_out.empty:
-            st.info("출금 없음")
-        else:
-            df_show = cp_out.reset_index()
-            df_show["USD합계"] = df_show["USD합계"].round(2)
-            df_show["합계"] = df_show["합계"].round(4)
-            st.dataframe(df_show, use_container_width=True, hide_index=True)
+        _render_cp(cp_out, "출금 없음")
+    with tab_in:
+        _render_cp(cp_in, "입금 없음")
 
     # 시계열 — 일자별 또는 시간대별
     st.markdown("---")
