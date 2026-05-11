@@ -51,7 +51,7 @@ def cached_total_usd(address: str) -> dict:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def cached_history(address: str, limit: int = 100) -> list[dict]:
+def cached_history(address: str, limit: int = 2000) -> list[dict]:
     return get_combined_history(address, limit=limit)
 
 
@@ -190,7 +190,8 @@ def render_detail(key: str, w: dict):
     # 거래 내역
     st.subheader("📜 거래 내역")
     try:
-        hist = cached_history(w["address"], limit=100)
+        with st.spinner("거래 내역 조회 중 (전체 페이지)..."):
+            hist = cached_history(w["address"], limit=2000)
     except Exception as e:
         st.error(f"내역 조회 실패: {e}")
         return

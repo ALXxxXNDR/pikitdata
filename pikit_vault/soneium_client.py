@@ -80,26 +80,42 @@ def _bs_get(path: str, params: dict | None = None) -> dict:
     return r.json()
 
 
-def get_transactions(address: str, limit: int = 50, page: int = 1) -> list[dict]:
-    """주소의 일반 트랜잭션 내역 (native ETH 전송).
+def _bs_get_paginated(path: str, max_items: int = 2000, max_pages: int = 50) -> list[dict]:
+    """Blockscout next_page_params 자동 따라가기.
+
+    Blockscout 는 한 페이지에 최대 50건씩 줌. max_items 또는 max_pages 도달 시 중단.
+    """
+    items: list[dict] = []
+    params: dict | None = None
+    for _ in range(max_pages):
+        data = _bs_get(path, params or {})
+        page_items = data.get("items") or []
+        items.extend(page_items)
+        if len(items) >= max_items:
+            return items[:max_items]
+        next_params = data.get("next_page_params")
+        if not next_params:
+            return items
+        params = next_params
+    return items
+
+
+def get_transactions(address: str, limit: int = 2000) -> list[dict]:
+    """주소의 일반 트랜잭션 내역 (native ETH 전송) — 페이지네이션 자동.
 
     각 row 형식:
       hash, timestamp, from, to, value (wei str), fee, status, ...
     """
-    data = _bs_get(f"/addresses/{address}/transactions", {})
-    items = data.get("items", [])
-    return items[:limit]
+    return _bs_get_paginated(f"/addresses/{address}/transactions", max_items=limit)
 
 
-def get_token_transfers(address: str, limit: int = 50) -> list[dict]:
-    """ERC20 토큰 전송 내역.
+def get_token_transfers(address: str, limit: int = 2000) -> list[dict]:
+    """ERC20 토큰 전송 내역 — 페이지네이션 자동.
 
     각 row 형식:
       hash, timestamp, from, to, token (symbol/decimals/name), total (value_wei + decimals)
     """
-    data = _bs_get(f"/addresses/{address}/token-transfers", {})
-    items = data.get("items", [])
-    return items[:limit]
+    return _bs_get_paginated(f"/addresses/{address}/token-transfers", max_items=limit)
 
 
 def get_address_info(address: str) -> dict:
@@ -169,7 +185,7 @@ def get_total_usd(address: str) -> dict:
     }
 
 
-def get_combined_history(address: str, limit: int = 100) -> list[dict]:
+def get_combined_history(address: str, limit: int = 2000) -> list[dict]:
     """native tx + token transfer 통합 시계열.
 
     각 row:
