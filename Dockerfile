@@ -24,6 +24,7 @@ RUN pip install --no-cache-dir --upgrade pip \
 
 # 앱 코드 복사 (data 폴더는 의도적으로 제외 — 볼륨으로 마운트).
 COPY pikit_analyzer /app/pikit_analyzer
+COPY pikit_vault /app/pikit_vault
 COPY app.py /app/app.py
 COPY .streamlit /app/.streamlit
 

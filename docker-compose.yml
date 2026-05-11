@@ -55,7 +55,100 @@ services:
         reservations:
           memory: 512M
 
+  # ─────────────────────────────────────────────────────────────────
+  # PIKIT Vault — Soneium 운영 지갑 모니터링 대시보드
+  # 메인 사이트와 같은 이미지를 공유하고 CMD 만 다르게 실행.
+  # 리버스 프록시 매핑: despell.synology.me/pikit → http://localhost:8502
+  # ─────────────────────────────────────────────────────────────────
+  pikit-vault:
+    image: pikit-balance:latest
+    container_name: pikit-vault
+    depends_on:
+      - pikit  # 이미지 빌드 의존
+    ports:
+      - "8502:8502"
+    volumes:
+      - pikit_vault_cache:/app/cache
+    environment:
+      - PYTHONUNBUFFERED=1
+      - STREAMLIT_SERVER_HEADLESS=true
+      - STREAMLIT_SERVER_PORT=8502
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+      - STREAMLIT_SERVER_BASEURLPATH=/pikit
+      - STREAMLIT_BROWSER_GATHERUSAGESTATS=false
+      - PIKIT_CACHE_DIR=/app/cache
+      # Soneium RPC — Tenderly 우선, 없으면 official 만 사용.
+      - TENDERLY_RPC_URL=${TENDERLY_RPC_URL:-}
+      # 알림 메일 설정 (.env 에 적으면 자동 로드).
+      - ALERT_EMAIL_TO=${ALERT_EMAIL_TO:-alex@depsell.io}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-}
+      - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
+    restart: unless-stopped
+    labels:
+      - "com.docker.compose.synology-autostart=true"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
+    command:
+      - streamlit
+      - run
+      - pikit_vault/app.py
+      - --server.port=8502
+      - --server.address=0.0.0.0
+      - --server.headless=true
+      - --server.baseUrlPath=/pikit
+      - --browser.gatherUsageStats=false
+
+  # ─────────────────────────────────────────────────────────────────
+  # PIKIT Vault — 알림 데몬 (1분마다 잔고 체크)
+  # 같은 이미지/볼륨을 공유하고 alert.py 만 무한 루프 실행.
+  # 쿨다운(기본 6h)이 적용되어 1분 체크여도 메일 스팸 없음.
+  # ─────────────────────────────────────────────────────────────────
+  pikit-vault-alert:
+    image: pikit-balance:latest
+    container_name: pikit-vault-alert
+    depends_on:
+      - pikit
+    volumes:
+      # vault dashboard 와 같은 cache 폴더 공유 → alert state 일관성 유지.
+      - pikit_vault_cache:/app/cache
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PIKIT_CACHE_DIR=/app/cache
+      - TENDERLY_RPC_URL=${TENDERLY_RPC_URL:-}
+      - ALERT_EMAIL_TO=${ALERT_EMAIL_TO:-alex@depsell.io}
+      - ALERT_INTERVAL_SECONDS=${ALERT_INTERVAL_SECONDS:-60}
+      - ALERT_COOLDOWN_HOURS=${ALERT_COOLDOWN_HOURS:-6}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-}
+      - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
+    restart: unless-stopped
+    labels:
+      - "com.docker.compose.synology-autostart=true"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
+    command:
+      - python
+      - -m
+      - pikit_vault.alert
+      - --daemon
+
 # Named volumes — Docker 가 자동으로 만들고 관리.
 # 컨테이너 재빌드/재시작 후에도 보존. 절대 사라지지 않음.
 volumes:
   pikit_cache:
+  pikit_vault_cache:
