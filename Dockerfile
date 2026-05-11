@@ -17,6 +17,12 @@ RUN groupadd -g 1026 pikit && useradd -u 1026 -g 1026 -m -s /bin/bash pikit
 
 WORKDIR /app
 
+# /app/cache 를 pikit 소유로 미리 생성 — Docker named volume 이 처음 마운트될 때
+# 이 디렉토리의 ownership 을 상속받음. 이걸 안 해두면 volume 이 root 소유로
+# 생성되어 컨테이너 내 pikit 유저가 쓰기 못 함 (Synology 흔한 함정).
+# 이미 존재하는 volume 은 영향 없음 — chown 따로 필요.
+RUN mkdir -p /app/cache && chown -R pikit:pikit /app/cache
+
 # 의존성을 먼저 설치 — 코드 변경 시 캐시 재사용.
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir --upgrade pip \
