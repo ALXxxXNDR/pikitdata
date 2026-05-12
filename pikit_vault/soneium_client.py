@@ -26,6 +26,36 @@ _TIMEOUT = 10  # 초
 
 
 # ─────────────────────────────────────────────────────────────────
+# Stablecoin USD 환산 — 시세가 $0.998 같은 노이즈가 있어도 액면가 그대로 사용.
+# 회계상 "1 USDC = $1" 로 다루는 게 직관적 (owner 입장 PNL).
+# ─────────────────────────────────────────────────────────────────
+
+_STABLE_SYMBOLS = {"USDC", "USDT", "USDSC", "DAI", "BUSD", "TUSD", "USDD", "FRAX", "GUSD"}
+
+
+def _is_stablecoin(symbol: str | None, rate: float | None) -> bool:
+    if symbol:
+        s = symbol.upper().strip()
+        if s in _STABLE_SYMBOLS:
+            return True
+        # USDC.e, sUSD 등 변형도 포착
+        if "USD" in s and len(s) <= 8:
+            return True
+    if rate is not None and 0.97 <= rate <= 1.03:
+        return True
+    return False
+
+
+def _token_to_usd(value: float, rate: float | None, symbol: str | None) -> float:
+    """토큰 → USD 환산. stablecoin 이면 액면가 그대로."""
+    if _is_stablecoin(symbol, rate):
+        return value
+    if rate is None:
+        return 0.0
+    return value * rate
+
+
+# ─────────────────────────────────────────────────────────────────
 # RPC — JSON-RPC over HTTPS with failover
 # ─────────────────────────────────────────────────────────────────
 
@@ -149,9 +179,10 @@ def get_token_balances(address: str) -> list[dict]:
             rate = float(rate_str) if rate_str not in (None, "", "null") else None
         except (TypeError, ValueError):
             rate = None
-        usd = (value * rate) if rate is not None else 0.0
+        symbol = tok.get("symbol") or "?"
+        usd = _token_to_usd(value, rate, symbol)
         out.append({
-            "symbol": tok.get("symbol") or "?",
+            "symbol": symbol,
             "name": tok.get("name") or "",
             "decimals": decimals,
             "value_raw": str(raw),
@@ -247,7 +278,9 @@ def get_combined_history(address: str, limit: int = 2000) -> list[dict]:
                 rate = float(rate_str) if rate_str not in (None, "", "null") else None
             except (TypeError, ValueError):
                 rate = None
-            usd = (val * rate) if rate is not None else None
+            symbol = tok.get("symbol") or "?"
+            # stablecoin 이면 액면가, 아니면 시세 환산
+            usd = _token_to_usd(val, rate, symbol) if (rate is not None or _is_stablecoin(symbol, rate)) else None
             direction = "self" if fr == to else ("in" if to == addr_lo else "out")
             counterparty = fr if direction == "in" else to
             out.append({
@@ -255,7 +288,7 @@ def get_combined_history(address: str, limit: int = 2000) -> list[dict]:
                 "timestamp": ts,
                 "direction": direction,
                 "counterparty": counterparty,
-                "symbol": tok.get("symbol") or "?",
+                "symbol": symbol,
                 "value": val,
                 "usd": usd,
                 "kind": "token",
