@@ -101,7 +101,7 @@ export function ProjectSwitcher({ projects, currentKey }: Props) {
         <Swatch project={current} size={36} />
         <span
           className="text-[44px] leading-none"
-          style={{ fontFamily: "var(--font-serif)", letterSpacing: "-0.02em" }}
+          style={{ fontFamily: `var(--font-instrument-serif), "Instrument Serif", serif`, letterSpacing: "-0.02em" }}
         >
           {current.name}
         </span>

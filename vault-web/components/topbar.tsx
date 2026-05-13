@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { auth, signOut } from "@/auth";
 
 export async function Topbar() {
@@ -11,18 +12,20 @@ export async function Topbar() {
     <header className="flex items-center justify-between gap-6 py-2 pb-7 border-b border-ink-12">
       <div className="flex items-center gap-2.5 text-[15px] font-semibold">
         <div
-          className="grid place-items-center w-[22px] h-[22px] rounded-md text-[12px] font-semibold"
-          style={{
-            background: "var(--color-ink)",
-            color: "var(--color-bg)",
-            fontFamily: "var(--font-mono)",
-            letterSpacing: "-0.04em",
-          }}
+          className="grid place-items-center w-[28px] h-[28px] rounded-md overflow-hidden"
+          style={{ background: "var(--color-ink)" }}
         >
-          V
+          <Image
+            src="/logos/despell.png"
+            alt="DeSpell"
+            width={20}
+            height={20}
+            style={{ objectFit: "contain" }}
+            priority
+          />
         </div>
-        Vault Stack{" "}
-        <small className="ink-45 font-normal ml-1">· 멀티 프로젝트 지갑 대시보드</small>
+        DeSpell Vault{" "}
+        <small className="ink-45 font-normal ml-1">· 프로젝트 대시보드</small>
       </div>
       <div className="flex items-center gap-2.5">
         <span className="inline-flex items-center gap-2 px-3.5 py-2 rounded-full text-[13px] border border-ink-12">

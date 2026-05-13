@@ -40,7 +40,7 @@ export function WalletsTable({ projectKey, rows }: Props) {
       <div className="flex items-center justify-between mb-5">
         <h2
           className="m-0 text-[26px]"
-          style={{ fontFamily: "var(--font-serif)", letterSpacing: "-0.01em" }}
+          style={{ fontFamily: `var(--font-instrument-serif), "Instrument Serif", serif`, letterSpacing: "-0.01em" }}
         >
           지갑
         </h2>

@@ -16,11 +16,14 @@ const instrumentSerif = Instrument_Serif({
   variable: "--font-instrument-serif",
   weight: "400",
   subsets: ["latin"],
+  display: "swap",
+  preload: true,
+  fallback: ["serif"],
 });
 
 export const metadata: Metadata = {
-  title: "Vault — 멀티 프로젝트 지갑 대시보드",
-  description: "Soneium 운영 지갑 모니터링 (PIKIT · Press A · Pnyx)",
+  title: "DeSpell Vault — 프로젝트 대시보드",
+  description: "DeSpell 프로젝트별 운영 지갑 모니터링 (PIKIT · Press A · Pnyx)",
 };
 
 export default function RootLayout({

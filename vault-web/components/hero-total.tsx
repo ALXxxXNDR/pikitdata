@@ -83,7 +83,7 @@ export function HeroTotal({ totalUsd, curve }: Props) {
         <div
           className="my-4"
           style={{
-            fontFamily: "var(--font-serif)",
+            fontFamily: `var(--font-instrument-serif), "Instrument Serif", serif`,
             fontSize: "88px",
             lineHeight: 1,
             letterSpacing: "-0.03em",

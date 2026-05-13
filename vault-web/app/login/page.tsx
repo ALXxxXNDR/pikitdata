@@ -33,25 +33,25 @@ export default async function LoginPage({
       >
         <div className="flex items-center gap-2 mb-8">
           <div
-            className="grid place-items-center w-[22px] h-[22px] rounded-md"
-            style={{
-              background: "var(--color-ink)",
-              color: "var(--color-bg)",
-              fontFamily: "var(--font-mono)",
-              fontSize: 12,
-              fontWeight: 600,
-              letterSpacing: "-0.04em",
-            }}
+            className="grid place-items-center w-[28px] h-[28px] rounded-md overflow-hidden"
+            style={{ background: "var(--color-ink)" }}
           >
-            V
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/logos/despell.png"
+              alt="DeSpell"
+              width={20}
+              height={20}
+              style={{ objectFit: "contain" }}
+            />
           </div>
-          <div className="text-[15px] font-semibold">Vault Stack</div>
+          <div className="text-[15px] font-semibold">DeSpell Vault</div>
         </div>
 
         <h1
           className="m-0 text-[36px]"
           style={{
-            fontFamily: "var(--font-serif)",
+            fontFamily: `var(--font-instrument-serif), "Instrument Serif", serif`,
             letterSpacing: "-0.02em",
             lineHeight: 1.1,
           }}

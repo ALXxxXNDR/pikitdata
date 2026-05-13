@@ -11,7 +11,7 @@ export function ComingSoon({ project }: { project: ProjectConfig }) {
       </div>
       <div
         className="text-[40px]"
-        style={{ fontFamily: "var(--font-serif)", letterSpacing: "-0.02em" }}
+        style={{ fontFamily: `var(--font-instrument-serif), "Instrument Serif", serif`, letterSpacing: "-0.02em" }}
       >
         {project.name}
       </div>

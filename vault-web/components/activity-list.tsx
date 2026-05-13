@@ -46,7 +46,7 @@ export function ActivityList({ items, limit = 8 }: Props) {
       <div className="flex items-center justify-between mb-5">
         <h2
           className="m-0 text-[26px]"
-          style={{ fontFamily: "var(--font-serif)", letterSpacing: "-0.01em" }}
+          style={{ fontFamily: `var(--font-instrument-serif), "Instrument Serif", serif`, letterSpacing: "-0.01em" }}
         >
           최근 활동
         </h2>

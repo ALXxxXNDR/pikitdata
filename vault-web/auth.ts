@@ -20,6 +20,14 @@ const GOOGLE_CLIENT_SECRET =
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
+  // 세션 유지 — JWT 7일 (1주). 마지막 활동 기준 갱신 없음, 절대 만료.
+  session: {
+    strategy: "jwt",
+    maxAge: 7 * 24 * 60 * 60,
+  },
+  jwt: {
+    maxAge: 7 * 24 * 60 * 60,
+  },
   providers: [
     Google({
       clientId: GOOGLE_CLIENT_ID,

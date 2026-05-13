@@ -46,7 +46,7 @@ export function WalletDetail({ project, wallet, snapshot, history }: Props) {
 
       <h2
         className="mt-4 text-[40px]"
-        style={{ fontFamily: "var(--font-serif)", letterSpacing: "-0.02em" }}
+        style={{ fontFamily: `var(--font-instrument-serif), "Instrument Serif", serif`, letterSpacing: "-0.02em" }}
       >
         {wallet.name}
       </h2>
@@ -95,7 +95,7 @@ function Metric({
       <div
         className="text-[32px] mt-3"
         style={{
-          fontFamily: "var(--font-serif)",
+          fontFamily: `var(--font-instrument-serif), "Instrument Serif", serif`,
           letterSpacing: "-0.02em",
           color: accent ? "var(--color-accent)" : undefined,
         }}
@@ -166,7 +166,7 @@ function CounterpartySection({
     <div className="bg-white border border-ink-12 rounded-[18px] p-7">
       <h3
         className="m-0 text-[26px]"
-        style={{ fontFamily: "var(--font-serif)", letterSpacing: "-0.01em" }}
+        style={{ fontFamily: `var(--font-instrument-serif), "Instrument Serif", serif`, letterSpacing: "-0.01em" }}
       >
         카운터파티
       </h3>
@@ -226,7 +226,7 @@ function TokensSection({ snapshot }: { snapshot: WalletSnapshot | null }) {
     <div className="bg-white border border-ink-12 rounded-[18px] p-7">
       <h3
         className="m-0 text-[26px]"
-        style={{ fontFamily: "var(--font-serif)", letterSpacing: "-0.01em" }}
+        style={{ fontFamily: `var(--font-instrument-serif), "Instrument Serif", serif`, letterSpacing: "-0.01em" }}
       >
         보유 토큰
       </h3>
