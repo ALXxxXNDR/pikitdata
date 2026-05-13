@@ -1,3 +1,6 @@
+"use client";
+
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { ActivityList } from "./activity-list";
 import type {
@@ -139,37 +142,99 @@ function CounterpartySection({
   history: Transfer[];
   pnlMode: "income" | "treasury";
 }) {
-  const inMap = new Map<string, { count: number; usd: number }>();
-  const outMap = new Map<string, { count: number; usd: number }>();
-  for (const t of history) {
-    const map = t.direction === "in" ? inMap : t.direction === "out" ? outMap : null;
-    if (!map) continue;
-    const prev = map.get(t.counterparty) ?? { count: 0, usd: 0 };
-    prev.count += 1;
-    prev.usd += t.usd ?? 0;
-    map.set(t.counterparty, prev);
-  }
-  const top = (m: Map<string, { count: number; usd: number }>) =>
-    Array.from(m.entries())
-      .sort((a, b) => b[1].usd - a[1].usd)
-      .slice(0, 10);
-  const inTop = top(inMap);
-  const outTop = top(outMap);
+  const [query, setQuery] = useState("");
+
+  const { inAll, outAll } = useMemo(() => {
+    const inMap = new Map<string, { count: number; usd: number }>();
+    const outMap = new Map<string, { count: number; usd: number }>();
+    for (const t of history) {
+      const map =
+        t.direction === "in" ? inMap : t.direction === "out" ? outMap : null;
+      if (!map) continue;
+      const prev = map.get(t.counterparty) ?? { count: 0, usd: 0 };
+      prev.count += 1;
+      prev.usd += t.usd ?? 0;
+      map.set(t.counterparty, prev);
+    }
+    const sort = (m: Map<string, { count: number; usd: number }>) =>
+      Array.from(m.entries()).sort((a, b) => b[1].usd - a[1].usd);
+    return { inAll: sort(inMap), outAll: sort(outMap) };
+  }, [history]);
+
+  const filter = (rows: [string, { count: number; usd: number }][]) => {
+    const q = query.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(([addr]) => addr.toLowerCase().includes(q));
+  };
+
+  const inRows = filter(inAll);
+  const outRows = filter(outAll);
 
   // Vault (treasury) 는 출금처 우선, income 은 입금처 우선
-  const primary = pnlMode === "treasury" ? outTop : inTop;
-  const secondary = pnlMode === "treasury" ? inTop : outTop;
-  const primaryLabel = pnlMode === "treasury" ? "출금처 Top" : "입금처 Top";
-  const secondaryLabel = pnlMode === "treasury" ? "입금처" : "출금처";
+  const primary = pnlMode === "treasury" ? outRows : inRows;
+  const secondary = pnlMode === "treasury" ? inRows : outRows;
+  const primaryLabel =
+    pnlMode === "treasury" ? `출금처 (${outRows.length})` : `입금처 (${inRows.length})`;
+  const secondaryLabel =
+    pnlMode === "treasury" ? `입금처 (${inRows.length})` : `출금처 (${outRows.length})`;
 
   return (
     <div className="bg-white border border-ink-12 rounded-[18px] p-7">
-      <h3
-        className="m-0 text-[26px]"
-        style={{ fontFamily: `var(--font-instrument-serif), "Instrument Serif", serif`, letterSpacing: "-0.01em" }}
-      >
-        카운터파티
-      </h3>
+      <div className="flex items-center justify-between gap-4 mb-2">
+        <h3
+          className="m-0 text-[26px]"
+          style={{
+            fontFamily: `var(--font-instrument-serif), "Instrument Serif", serif`,
+            letterSpacing: "-0.01em",
+          }}
+        >
+          카운터파티
+        </h3>
+        <div className="relative">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            width="13"
+            height="13"
+            className="absolute left-3 top-1/2 -translate-y-1/2 ink-45 pointer-events-none"
+          >
+            <circle cx="11" cy="11" r="7" />
+            <path d="m20 20-3.5-3.5" />
+          </svg>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="주소 검색 (예: 0xe)"
+            className="bg-transparent border border-ink-12 rounded-full pl-8 pr-3 py-1.5 text-[12.5px] ink placeholder:ink-45 focus:outline-none focus:border-ink-25 w-[200px]"
+            style={{ fontFamily: "var(--font-mono)" }}
+            spellCheck={false}
+            autoComplete="off"
+          />
+          {query && (
+            <button
+              type="button"
+              onClick={() => setQuery("")}
+              aria-label="검색 지우기"
+              className="absolute right-2 top-1/2 -translate-y-1/2 grid place-items-center w-5 h-5 rounded-full hover:bg-ink-06 ink-45 cursor-pointer"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                width="11"
+                height="11"
+              >
+                <path d="M18 6 6 18" />
+                <path d="m6 6 12 12" />
+              </svg>
+            </button>
+          )}
+        </div>
+      </div>
+
       <div className="ink-45 text-[12px] uppercase tracking-[0.12em] mt-4 mb-2">
         {primaryLabel}
       </div>
@@ -182,7 +247,11 @@ function CounterpartySection({
   );
 }
 
-function CpRows({ items }: { items: [string, { count: number; usd: number }][] }) {
+function CpRows({
+  items,
+}: {
+  items: [string, { count: number; usd: number }][];
+}) {
   if (items.length === 0) {
     return <div className="ink-45 text-[13px] py-4">없음</div>;
   }
@@ -194,12 +263,16 @@ function CpRows({ items }: { items: [string, { count: number; usd: number }][] }
           className="grid items-center gap-3 py-2.5 border-b border-ink-06 last:border-b-0"
           style={{ gridTemplateColumns: "1fr auto auto" }}
         >
-          <div
-            className="text-[12.5px]"
+          <a
+            href={`https://soneium.blockscout.com/address/${addr}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[12px] ink hover:text-[var(--color-accent)] hover:underline underline-offset-2 break-all"
             style={{ fontFamily: "var(--font-mono)" }}
+            title="Blockscout 에서 열기"
           >
-            {shortAddr(addr)}
-          </div>
+            {addr}
+          </a>
           <div
             className="ink-45 text-[12px]"
             style={{ fontFamily: "var(--font-mono)" }}
@@ -210,7 +283,8 @@ function CpRows({ items }: { items: [string, { count: number; usd: number }][] }
             className="text-[13px] text-right min-w-[100px]"
             style={{ fontFamily: "var(--font-mono)" }}
           >
-            ${v.usd.toLocaleString("en-US", {
+            $
+            {v.usd.toLocaleString("en-US", {
               minimumFractionDigits: 2,
               maximumFractionDigits: 2,
             })}
