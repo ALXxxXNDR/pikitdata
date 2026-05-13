@@ -38,8 +38,8 @@ export const PROJECTS: ProjectConfig[] = [
       {
         key: "revenue",
         name: "운영 수익 지갑",
-        address: "", // TODO: 주소 등록
-        description: "Press A 운영 수익",
+        address: "0x596e30E49158B5447D62211B54852ff86793cc57",
+        description: "Press A 운영 수익이 모이는 지갑",
         kind: "revenue",
         pnlMode: "income",
         alertThresholdUsd: null,
@@ -47,8 +47,8 @@ export const PROJECTS: ProjectConfig[] = [
       {
         key: "reward_pool",
         name: "리워드 풀",
-        address: "", // TODO: 주소 등록
-        description: "Press A 리워드 지급 풀",
+        address: "0xC357E54baB5f277535e42683706F140C0603A2Ed",
+        description: "Press A 유저 리워드 지급 컨트랙트",
         kind: "reward",
         pnlMode: "treasury",
         alertThresholdUsd: 300,
