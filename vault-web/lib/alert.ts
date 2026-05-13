@@ -11,6 +11,7 @@ export type AlertResult = {
   sent: boolean;
   cooldown?: boolean;
   error?: string;
+  sendError?: string;
 };
 
 const ALERT_EMAIL_TO = (process.env.ALERT_EMAIL_TO ?? "alex@depsell.io").trim();
@@ -18,10 +19,12 @@ const RESEND_API_KEY = (process.env.RESEND_API_KEY ?? "").trim();
 const RESEND_FROM =
   (process.env.RESEND_FROM ?? "Vault Alert <onboarding@resend.dev>").trim();
 
-async function sendEmail(subject: string, body: string): Promise<boolean> {
+type SendResult = { ok: boolean; error?: string };
+
+async function sendEmail(subject: string, body: string): Promise<SendResult> {
   if (!RESEND_API_KEY) {
     console.log(`[ALERT][stdout] ${subject}\n${body}`);
-    return false;
+    return { ok: false, error: "RESEND_API_KEY 미설정 (stdout 로그만)" };
   }
   try {
     const r = await fetch("https://api.resend.com/emails", {
@@ -39,13 +42,15 @@ async function sendEmail(subject: string, body: string): Promise<boolean> {
     });
     if (!r.ok) {
       const t = await r.text();
-      console.error(`[ALERT][resend] HTTP ${r.status}: ${t}`);
-      return false;
+      const msg = `HTTP ${r.status}: ${t}`;
+      console.error(`[ALERT][resend] ${msg}`);
+      return { ok: false, error: msg };
     }
-    return true;
+    return { ok: true };
   } catch (e) {
+    const msg = String(e);
     console.error("[ALERT][resend] failed", e);
-    return false;
+    return { ok: false, error: msg };
   }
 }
 
@@ -138,8 +143,8 @@ ${tokenLines}
 
 발송 시각: ${new Date().toISOString()}
 `;
-    const sent = await sendEmail(subject, body);
-    if (sent || !RESEND_API_KEY) memCooldown.set(key, now);
+    const result = await sendEmail(subject, body);
+    if (result.ok || !RESEND_API_KEY) memCooldown.set(key, now);
     out.push({
       project: project.key,
       wallet: wallet.key,
@@ -147,7 +152,8 @@ ${tokenLines}
       threshold,
       current,
       triggered: true,
-      sent,
+      sent: result.ok,
+      sendError: result.error,
     });
   }
   return out;
