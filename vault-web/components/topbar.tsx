@@ -1,4 +1,12 @@
-export function Topbar() {
+import { auth, signOut } from "@/auth";
+
+export async function Topbar() {
+  const session = await auth();
+  const user = session?.user;
+  const initials = user?.email
+    ? user.email.slice(0, 2).toUpperCase()
+    : user?.name?.slice(0, 2).toUpperCase() ?? "??";
+
   return (
     <header className="flex items-center justify-between gap-6 py-2 pb-7 border-b border-ink-12">
       <div className="flex items-center gap-2.5 text-[15px] font-semibold">
@@ -17,28 +25,67 @@ export function Topbar() {
         <small className="ink-45 font-normal ml-1">· 멀티 프로젝트 지갑 대시보드</small>
       </div>
       <div className="flex items-center gap-2.5">
-        <button
-          className="inline-flex items-center gap-2 px-3.5 py-2 rounded-full text-[13px] border border-ink-12 hover:bg-ink-06"
-        >
+        <span className="inline-flex items-center gap-2 px-3.5 py-2 rounded-full text-[13px] border border-ink-12">
           <span
             className="block w-1.5 h-1.5 rounded-full"
             style={{ background: "var(--color-accent)" }}
           />
           실시간 동기화
-        </button>
-        <button className="inline-flex items-center gap-2 px-3.5 py-2 rounded-full text-[13px] border border-ink-12 hover:bg-ink-06">
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            className="w-3.5 h-3.5"
-          >
-            <circle cx="11" cy="11" r="7" />
-            <path d="m20 20-3.5-3.5" />
-          </svg>
-          검색
-        </button>
+        </span>
+
+        {user ? (
+          <>
+            <span
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-full text-[12.5px] border border-ink-12"
+              title={user.email ?? user.name ?? "user"}
+            >
+              <span
+                className="grid place-items-center w-5 h-5 rounded-full"
+                style={{
+                  background: "var(--color-ink)",
+                  color: "var(--color-bg)",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 9,
+                  fontWeight: 600,
+                }}
+              >
+                {initials}
+              </span>
+              <span
+                className="ink-60 max-w-[140px] truncate"
+                style={{ fontFamily: "var(--font-mono)" }}
+              >
+                {user.email ?? user.name}
+              </span>
+            </span>
+            <form
+              action={async () => {
+                "use server";
+                await signOut({ redirectTo: "/login" });
+              }}
+            >
+              <button
+                type="submit"
+                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-full text-[13px] border border-ink-12 hover:bg-ink-06 cursor-pointer"
+                title="로그아웃"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  width="14"
+                  height="14"
+                >
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                  <polyline points="16 17 21 12 16 7" />
+                  <line x1="21" y1="12" x2="9" y2="12" />
+                </svg>
+                로그아웃
+              </button>
+            </form>
+          </>
+        ) : null}
       </div>
     </header>
   );
