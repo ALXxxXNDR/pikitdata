@@ -7,7 +7,6 @@ import { AssetsList, holdingsToItems } from "@/components/assets-list";
 import { ActivityList } from "@/components/activity-list";
 import { ComingSoon } from "@/components/coming-soon";
 import { WalletDetail } from "@/components/wallet-detail";
-import { TrackingRow } from "@/components/tracking-row";
 import { PROJECTS, getProject } from "@/lib/projects";
 import {
   buildBalanceCurve,
@@ -42,7 +41,6 @@ export default async function Page({
             현재 프로젝트
           </div>
           <ProjectSwitcher projects={PROJECTS} currentKey={project.key} />
-          {!project.comingSoon && <TrackingRow wallets={project.wallets} />}
         </div>
         <ProjectMeta
           walletCount={project.wallets.length}

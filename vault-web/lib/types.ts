@@ -14,7 +14,8 @@ export type WalletConfig = {
 export type ProjectConfig = {
   key: string;
   name: string;
-  mark: string; // 단일/두 글자 라벨
+  mark: string; // 로고 미설정 시 fallback 글자
+  logo?: string; // public/ 기준 경로 (예: "/logos/pikit.png")
   description?: string;
   team?: string;
   comingSoon?: boolean;

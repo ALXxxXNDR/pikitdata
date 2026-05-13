@@ -1,9 +1,14 @@
+"use client";
+
+import { useMemo, useState } from "react";
 import type { Transfer } from "@/lib/types";
 
 type Props = {
   items: Transfer[];
   limit?: number;
 };
+
+type Filter = "all" | "in" | "out";
 
 function timeAgo(iso: string): string {
   const t = new Date(iso).getTime();
@@ -23,7 +28,19 @@ function shortAddr(a: string): string {
 }
 
 export function ActivityList({ items, limit = 8 }: Props) {
-  const rows = items.slice(0, limit);
+  const [filter, setFilter] = useState<Filter>("all");
+  const filtered = useMemo(() => {
+    if (filter === "all") return items;
+    return items.filter((r) => r.direction === filter);
+  }, [items, filter]);
+  const rows = filtered.slice(0, limit);
+
+  const tabs: { value: Filter; label: string }[] = [
+    { value: "all", label: "전체" },
+    { value: "in", label: "입금" },
+    { value: "out", label: "출금" },
+  ];
+
   return (
     <div className="bg-white border border-ink-12 rounded-[18px] p-7 mt-6">
       <div className="flex items-center justify-between mb-5">
@@ -34,25 +51,41 @@ export function ActivityList({ items, limit = 8 }: Props) {
           최근 활동
         </h2>
         <div className="flex gap-1 p-0.5 rounded-full bg-ink-06 text-[12px]">
-          <button
-            className="px-3 py-1 rounded-full bg-white"
-            style={{
-              boxShadow:
-                "0 1px 2px color-mix(in srgb, var(--color-ink) 10%, transparent)",
-            }}
-          >
-            전체
-          </button>
-          <button className="px-3 py-1 rounded-full ink-60">입금</button>
-          <button className="px-3 py-1 rounded-full ink-60">출금</button>
+          {tabs.map((t) => {
+            const active = t.value === filter;
+            return (
+              <button
+                key={t.value}
+                onClick={() => setFilter(t.value)}
+                className={`px-3 py-1 rounded-full ${
+                  active ? "bg-white" : "ink-60"
+                }`}
+                style={
+                  active
+                    ? {
+                        boxShadow:
+                          "0 1px 2px color-mix(in srgb, var(--color-ink) 10%, transparent)",
+                      }
+                    : undefined
+                }
+              >
+                {t.label}
+              </button>
+            );
+          })}
         </div>
       </div>
       <div className="flex flex-col">
         {rows.length === 0 && (
-          <div className="text-center ink-45 text-[13px] py-8">활동 없음</div>
+          <div className="text-center ink-45 text-[13px] py-8">
+            {filter === "all" ? "활동 없음" : `${filter === "in" ? "입금" : "출금"} 없음`}
+          </div>
         )}
         {rows.map((r, i) => {
           const isIn = r.direction === "in";
+          const txUrl = r.hash
+            ? `https://soneium.blockscout.com/tx/${r.hash}`
+            : null;
           return (
             <div
               key={r.hash + i}
@@ -66,7 +99,13 @@ export function ActivityList({ items, limit = 8 }: Props) {
                   opacity: isIn ? 1 : 0.6,
                 }}
               >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-4 h-4">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  className="w-4 h-4"
+                >
                   {isIn ? (
                     <>
                       <path d="M12 5v14" />
@@ -91,13 +130,42 @@ export function ActivityList({ items, limit = 8 }: Props) {
                   {r.symbol}
                 </div>
               </div>
+              <div className="text-[12.5px]">
+                {txUrl ? (
+                  <a
+                    href={txUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="ink-60 hover:text-ink hover:underline underline-offset-2 inline-flex items-center gap-1"
+                    style={{ fontFamily: "var(--font-mono)" }}
+                    title="이 거래의 트랜잭션 페이지 (Blockscout)"
+                  >
+                    {shortAddr(r.counterparty)}
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      width="10"
+                      height="10"
+                    >
+                      <path d="M7 17 17 7" />
+                      <path d="M7 7h10v10" />
+                    </svg>
+                  </a>
+                ) : (
+                  <span
+                    className="ink-60"
+                    style={{ fontFamily: "var(--font-mono)" }}
+                  >
+                    {shortAddr(r.counterparty)}
+                  </span>
+                )}
+              </div>
               <div
-                className="text-[12.5px] ink-60"
+                className="text-right"
                 style={{ fontFamily: "var(--font-mono)" }}
               >
-                {shortAddr(r.counterparty)}
-              </div>
-              <div className="text-right" style={{ fontFamily: "var(--font-mono)" }}>
                 <div
                   className="text-[13.5px]"
                   style={{ color: isIn ? "var(--color-accent)" : undefined }}

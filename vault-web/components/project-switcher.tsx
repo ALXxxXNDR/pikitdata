@@ -1,8 +1,63 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ProjectConfig } from "@/lib/types";
+
+function Swatch({
+  project,
+  size,
+}: {
+  project: ProjectConfig;
+  size: number;
+}) {
+  if (project.logo) {
+    return (
+      <span
+        className="grid place-items-center overflow-hidden"
+        style={{
+          width: size,
+          height: size,
+          borderRadius: size <= 28 ? 8 : 10,
+          background: "var(--color-surface)",
+          border: "1px solid color-mix(in srgb, var(--color-ink) 8%, transparent)",
+        }}
+      >
+        <Image
+          src={project.logo}
+          alt={`${project.name} logo`}
+          width={size}
+          height={size}
+          style={{ objectFit: "contain", width: size, height: size }}
+          priority={size >= 30}
+        />
+      </span>
+    );
+  }
+  return (
+    <span
+      className="grid place-items-center"
+      style={{
+        width: size,
+        height: size,
+        borderRadius: size <= 28 ? 8 : 10,
+        background: project.comingSoon ? "transparent" : "var(--color-ink)",
+        color: project.comingSoon
+          ? "color-mix(in srgb, var(--color-ink) 45%, transparent)"
+          : "var(--color-bg)",
+        fontFamily: "var(--font-mono)",
+        fontSize: size <= 28 ? 11 : 14,
+        fontWeight: 500,
+        border: project.comingSoon
+          ? "1px dashed color-mix(in srgb, var(--color-ink) 25%, transparent)"
+          : "none",
+      }}
+    >
+      {project.mark}
+    </span>
+  );
+}
 
 type Props = {
   projects: ProjectConfig[];
@@ -43,16 +98,7 @@ export function ProjectSwitcher({ projects, currentKey }: Props) {
           setOpen((v) => !v);
         }}
       >
-        <span
-          className="grid place-items-center w-9 h-9 rounded-[10px] text-sm font-medium"
-          style={{
-            background: "var(--color-ink)",
-            color: "var(--color-bg)",
-            fontFamily: "var(--font-mono)",
-          }}
-        >
-          {current.mark}
-        </span>
+        <Swatch project={current} size={36} />
         <span
           className="text-[44px] leading-none"
           style={{ fontFamily: "var(--font-serif)", letterSpacing: "-0.02em" }}
@@ -88,21 +134,7 @@ export function ProjectSwitcher({ projects, currentKey }: Props) {
               }`}
               onClick={() => select(p.key)}
             >
-              <span
-                className="grid place-items-center w-7 h-7 rounded-lg text-[11px] font-medium"
-                style={{
-                  background: p.comingSoon ? "transparent" : "var(--color-ink)",
-                  color: p.comingSoon
-                    ? "color-mix(in srgb, var(--color-ink) 45%, transparent)"
-                    : "var(--color-bg)",
-                  fontFamily: "var(--font-mono)",
-                  border: p.comingSoon
-                    ? "1px dashed color-mix(in srgb, var(--color-ink) 25%, transparent)"
-                    : "none",
-                }}
-              >
-                {p.mark}
-              </span>
+              <Swatch project={p} size={28} />
               <div className="flex flex-col leading-tight">
                 <b className="font-medium text-[14px]">{p.name}</b>
                 <span className="text-[12px] ink-45">{p.team ?? ""}</span>

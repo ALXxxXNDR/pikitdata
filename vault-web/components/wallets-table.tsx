@@ -17,6 +17,23 @@ function shortAddr(a: string): string {
   return `${a.slice(0, 6)}…${a.slice(-4)}`;
 }
 
+// 유형 배지 — 텍스트 자체에 배경색을 칠하고 텍스트는 흰색.
+function KindBadge({ kind }: { kind: "revenue" | "reward" }) {
+  const isRevenue = kind === "revenue";
+  return (
+    <span
+      className="inline-flex items-center px-2.5 py-1 rounded-md text-[12px] font-medium"
+      style={{
+        background: isRevenue ? "var(--color-accent)" : "var(--color-ink)",
+        color: "var(--color-surface)",
+        letterSpacing: "-0.005em",
+      }}
+    >
+      {isRevenue ? "운영 수익" : "리워드"}
+    </span>
+  );
+}
+
 export function WalletsTable({ projectKey, rows }: Props) {
   return (
     <div className="bg-white border border-ink-12 rounded-[18px] p-7">
@@ -52,14 +69,10 @@ export function WalletsTable({ projectKey, rows }: Props) {
             <th className="text-left font-normal ink-45 text-[11.5px] uppercase tracking-[0.1em] pb-3 px-2.5 border-b border-ink-06">
               유형
             </th>
-            <th
-              className="text-right font-normal ink-45 text-[11.5px] uppercase tracking-[0.1em] pb-3 px-2.5 border-b border-ink-06"
-            >
+            <th className="text-right font-normal ink-45 text-[11.5px] uppercase tracking-[0.1em] pb-3 px-2.5 border-b border-ink-06">
               잔액
             </th>
-            <th
-              className="text-right font-normal ink-45 text-[11.5px] uppercase tracking-[0.1em] pb-3 px-2.5 border-b border-ink-06"
-            >
+            <th className="text-right font-normal ink-45 text-[11.5px] uppercase tracking-[0.1em] pb-3 px-2.5 border-b border-ink-06">
               상세
             </th>
           </tr>
@@ -76,33 +89,39 @@ export function WalletsTable({ projectKey, rows }: Props) {
             <tr key={w.key}>
               <td className="py-3.5 px-2.5 border-b border-ink-06 align-middle">
                 <div className="font-medium">{w.name}</div>
-                <div
-                  className="ink-45 text-[12px]"
-                  style={{ fontFamily: "var(--font-mono)" }}
-                >
-                  {shortAddr(w.address)}
-                </div>
+                {w.address ? (
+                  <a
+                    href={`https://soneium.blockscout.com/address/${w.address}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="ink-45 hover:text-ink hover:underline underline-offset-2 inline-flex items-center gap-1"
+                    style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}
+                    title="Blockscout 에서 열기"
+                  >
+                    {shortAddr(w.address)}
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      width="10"
+                      height="10"
+                    >
+                      <path d="M7 17 17 7" />
+                      <path d="M7 7h10v10" />
+                    </svg>
+                  </a>
+                ) : (
+                  <div
+                    className="ink-45"
+                    style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}
+                  >
+                    —
+                  </div>
+                )}
               </td>
               <td className="py-3.5 px-2.5 border-b border-ink-06 align-middle">
-                <div className="flex items-center gap-2.5">
-                  <span
-                    className="grid place-items-center w-6 h-6 rounded-md text-[10px] font-medium"
-                    style={{
-                      background:
-                        w.kind === "revenue"
-                          ? "var(--color-accent)"
-                          : "var(--color-ink)",
-                      color: "var(--color-bg)",
-                      fontFamily: "var(--font-mono)",
-                      letterSpacing: "-0.04em",
-                    }}
-                  >
-                    {w.kind === "revenue" ? "R" : "V"}
-                  </span>
-                  <span className="text-[13px]">
-                    {w.kind === "revenue" ? "운영 수익" : "리워드"}
-                  </span>
-                </div>
+                <KindBadge kind={w.kind} />
               </td>
               <td
                 className="py-3.5 px-2.5 border-b border-ink-06 align-middle text-right"

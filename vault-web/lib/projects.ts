@@ -5,6 +5,7 @@ export const PROJECTS: ProjectConfig[] = [
     key: "pikit",
     name: "PIKIT",
     mark: "P",
+    logo: "/logos/pikit.png",
     description: "PIKIT 메인 프로젝트",
     team: "Soneium · Game",
     wallets: [
@@ -32,6 +33,7 @@ export const PROJECTS: ProjectConfig[] = [
     key: "press_a",
     name: "Press A",
     mark: "A",
+    logo: "/logos/pressa.png",
     description: "Press A 프로젝트",
     team: "Soneium · Game",
     wallets: [
