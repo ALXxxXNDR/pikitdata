@@ -1,4 +1,4 @@
-"""PIKIT Vault 대시보드 설정 — 지갑 주소, RPC URL, 임계값.
+"""Vault 대시보드 설정 — 프로젝트별 지갑, RPC URL, SMTP, 임계값.
 
 환경변수 우선:
   - TENDERLY_RPC_URL    Tenderly 의 Soneium RPC (없으면 official RPC 만 사용)
@@ -11,33 +11,91 @@ import os
 
 
 # ─────────────────────────────────────────────────────────────────
-# 추적할 지갑
+# 프로젝트별 지갑 구성
 # ─────────────────────────────────────────────────────────────────
-WALLETS = {
-    "revenue": {
-        "name": "운영 수익 지갑",
-        "address": "0x79fc40D88496b6b92EB789d28974dd6C162e8D6E",
-        "description": "PIKIT 운영 수익이 모이는 지갑",
-        "alert_threshold_usd": None,  # 알림 없음
-        "color": "#4caf50",  # 초록
-        "icon": "💰",
-        # PNL 모드: income = "수익 - 비용" (양수가 좋음). 들어온 돈은 수익.
-        "pnl_mode": "income",
+# 각 프로젝트는 여러 wallet 을 가질 수 있음.
+# wallet 필드:
+#   - address              체인 주소
+#   - kind                 "revenue" | "reward" — 라벨링용
+#   - pnl_mode             "income" (수익) | "treasury" (비용)
+#   - alert_threshold_usd  None 또는 임계값 (이하 시 메일 알림)
+#   - description          짧은 설명
+# 프로젝트 자체:
+#   - name                 표시명
+#   - description          짧은 설명
+#   - coming_soon          True 면 카드는 보이지만 비활성 (지갑 없어도 OK)
+# ─────────────────────────────────────────────────────────────────
+
+PROJECTS: dict = {
+    "pikit": {
+        "name": "PIKIT",
+        "description": "PIKIT 메인 프로젝트",
+        "wallets": {
+            "revenue": {
+                "name": "운영 수익 지갑",
+                "address": "0x79fc40D88496b6b92EB789d28974dd6C162e8D6E",
+                "description": "PIKIT 운영 수익이 모이는 지갑",
+                "kind": "revenue",
+                "pnl_mode": "income",
+                "alert_threshold_usd": None,
+            },
+            "reward_vault": {
+                "name": "유저 리워드 Vault",
+                "address": "0xee5c5c0f3817563d924c563294b8d4c56d3bd722",
+                "description": "유저에게 지급되는 리워드 컨트랙트",
+                "kind": "reward",
+                "pnl_mode": "treasury",
+                "alert_threshold_usd": 300,
+            },
+        },
     },
-    "reward_vault": {
-        "name": "유저 리워드 Vault",
-        "address": "0xee5c5c0f3817563d924c563294b8d4c56d3bd722",
-        "description": "유저에게 지급되는 리워드 컨트랙트",
-        "alert_threshold_usd": 300,  # $300 이하 시 알림
-        "color": "#f5b800",  # 황금
-        "icon": "🎁",
-        # PNL 모드: treasury = "운영 비용 계정" (음수가 정상). 들어온 돈은 충전,
-        # 나간 돈은 리워드 지급액. owner PNL = -지급액.
-        "pnl_mode": "treasury",
+    "press_a": {
+        "name": "Press A",
+        "description": "Press A 프로젝트",
+        "wallets": {
+            "revenue": {
+                "name": "운영 수익 지갑",
+                "address": "",  # TODO: 주소 등록 필요
+                "description": "Press A 운영 수익",
+                "kind": "revenue",
+                "pnl_mode": "income",
+                "alert_threshold_usd": None,
+            },
+            "reward_pool": {
+                "name": "리워드 풀",
+                "address": "",  # TODO: 주소 등록 필요
+                "description": "Press A 리워드 지급 풀",
+                "kind": "reward",
+                "pnl_mode": "treasury",
+                "alert_threshold_usd": 300,
+            },
+        },
+    },
+    "pnyx": {
+        "name": "Pnyx",
+        "description": "Pnyx — 준비 중",
+        "coming_soon": True,
     },
 }
 
-WALLET_LIST = list(WALLETS.keys())
+
+def iter_active_wallets():
+    """모든 프로젝트의 활성 지갑 순회 — (project_key, wallet_key, project, wallet)."""
+    for pkey, proj in PROJECTS.items():
+        if proj.get("coming_soon"):
+            continue
+        for wkey, wallet in (proj.get("wallets") or {}).items():
+            if not (wallet.get("address") or "").strip():
+                continue
+            yield pkey, wkey, proj, wallet
+
+
+# 호환성 — 기존 코드/cron 이 WALLETS 를 쓰면 PIKIT 만 노출 (마이그레이션 brige)
+WALLETS = {
+    f"{pkey}__{wkey}" if pkey != "pikit" else wkey: wallet
+    for pkey, wkey, _proj, wallet in iter_active_wallets()
+}
+
 
 # ─────────────────────────────────────────────────────────────────
 # Soneium 체인 정보
@@ -45,7 +103,6 @@ WALLET_LIST = list(WALLETS.keys())
 SONEIUM_CHAIN_ID = 1868
 SONEIUM_NATIVE_SYMBOL = "ETH"
 
-# RPC 엔드포인트들 — 첫 번째 가능한 거부터 시도 (failover).
 OFFICIAL_RPC_URLS = [
     "https://rpc.soneium.org",
     "https://soneium.drpc.org",
@@ -53,11 +110,7 @@ OFFICIAL_RPC_URLS = [
 
 
 def get_rpc_urls() -> list[str]:
-    """RPC URL 우선순위 리스트 — Tenderly 가 있으면 우선.
-
-    wss:// 형태가 들어와도 같은 호스트의 https:// 엔드포인트로 자동 변환
-    (Tenderly 게이트웨이는 두 프로토콜이 같은 path 를 공유).
-    """
+    """RPC URL 우선순위 — Tenderly 있으면 최상위. wss → https 자동 변환."""
     urls: list[str] = []
     tenderly = os.environ.get("TENDERLY_RPC_URL", "").strip()
     if tenderly:
@@ -70,10 +123,8 @@ def get_rpc_urls() -> list[str]:
     return urls
 
 
-# Blockscout REST API (Soneium 공식 explorer)
 BLOCKSCOUT_BASE = "https://soneium.blockscout.com/api/v2"
 
-# CoinGecko (ETH/USD) — 무료 tier, 30 calls/min
 COINGECKO_PRICE_URL = (
     "https://api.coingecko.com/api/v3/simple/price"
     "?ids=ethereum&vs_currencies=usd"
@@ -100,7 +151,6 @@ def is_smtp_configured() -> bool:
 # 캐시 / 상태 파일
 # ─────────────────────────────────────────────────────────────────
 def cache_dir() -> str:
-    """캐시 디렉토리 — alert state, tx cache 등."""
     env = os.environ.get("PIKIT_CACHE_DIR", "").strip()
     if env:
         return env

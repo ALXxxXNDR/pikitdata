@@ -33,9 +33,9 @@ from .config import (
     SMTP_PORT,
     SMTP_USE_TLS,
     SMTP_USER,
-    WALLETS,
     cache_dir,
     is_smtp_configured,
+    iter_active_wallets,
 )
 from .soneium_client import get_total_usd
 
@@ -93,51 +93,54 @@ def _send_email(subject: str, body: str) -> bool:
 
 
 def check_and_alert(force: bool = False) -> int:
-    """모든 지갑 잔고 확인 + 임계 미달 시 알림. 발송한 알림 수 반환."""
+    """모든 프로젝트의 모든 지갑 잔고 확인 + 임계 미달 시 알림. 발송 수 반환."""
     state = _load_state()
     now = time.time()
     cooldown = ALERT_COOLDOWN_HOURS * 3600
     sent = 0
 
-    for key, w in WALLETS.items():
-        threshold = w.get("alert_threshold_usd")
+    for project_key, wallet_key, project, wallet in iter_active_wallets():
+        threshold = wallet.get("alert_threshold_usd")
         if threshold is None:
             continue
 
+        state_key = f"{project_key}__{wallet_key}"
+        proj_name = project.get("name", project_key)
+        w_name = wallet.get("name", wallet_key)
+
         try:
-            info = get_total_usd(w["address"])
+            info = get_total_usd(wallet["address"])
         except Exception as e:
-            print(f"[ALERT][error] {key} RPC 실패: {e}", file=sys.stderr, flush=True)
+            print(f"[ALERT][error] {state_key} RPC 실패: {e}", file=sys.stderr, flush=True)
             continue
 
         total = info["total_usd"]
-        last = state.get(key, {})
+        last = state.get(state_key, {})
         last_ts = float(last.get("last_alert_ts") or 0)
 
         if total >= threshold:
-            # 회복 — 상태 리셋
             if last_ts:
-                print(f"[ALERT] {key}: 잔고 회복 (${total:.2f} >= ${threshold}) — 상태 리셋")
-                state.pop(key, None)
+                print(f"[ALERT] {state_key}: 잔고 회복 (${total:.2f} >= ${threshold}) — 상태 리셋")
+                state.pop(state_key, None)
             continue
 
-        # 임계 미달
         if not force and last_ts and (now - last_ts) < cooldown:
             wait_h = (cooldown - (now - last_ts)) / 3600
-            print(f"[ALERT] {key}: 쿨다운 중 ({wait_h:.1f}h 남음) — 스킵")
+            print(f"[ALERT] {state_key}: 쿨다운 중 ({wait_h:.1f}h 남음) — 스킵")
             continue
 
-        subject = f"🚨 PIKIT {w['name']} 잔고 ${total:,.2f} (< ${threshold})"
+        subject = f"[{proj_name}] {w_name} 잔고 ${total:,.2f} (< ${threshold})"
         token_lines = "\n".join(
             f"  - {t['symbol']}: {t['value']:,.4f} (${t['usd']:,.2f})"
-            for t in info["tokens"]
+            for t in info.get("tokens") or []
         ) or "  (보유 토큰 없음)"
 
-        body = f"""PIKIT Vault 잔고 알림
+        body = f"""Vault 잔고 알림
 
-지갑: {w['name']}
-주소: {w['address']}
-설명: {w.get('description', '')}
+프로젝트: {proj_name}
+지갑: {w_name}
+주소: {wallet['address']}
+설명: {wallet.get('description', '')}
 
 현재 총 USD: ${total:,.2f}
 임계값: ${threshold}
@@ -147,14 +150,16 @@ def check_and_alert(force: bool = False) -> int:
   - ETH: {info['eth']:.6f} (${info['eth_usd']:,.2f})
 {token_lines}
 
-탐색기: https://soneium.blockscout.com/address/{w['address']}
-대시보드: https://despell.synology.me/pikit/?wallet={key}
+탐색기: https://soneium.blockscout.com/address/{wallet['address']}
+대시보드: https://despell.synology.me/vault/?project={project_key}&wallet={wallet_key}
 
 발송 시각: {datetime.now(timezone.utc).isoformat()}
 """
 
         ok = _send_email(subject, body)
-        state[key] = {
+        state[state_key] = {
+            "project": project_key,
+            "wallet": wallet_key,
             "last_alert_ts": now,
             "last_total": total,
             "last_threshold": threshold,
@@ -162,9 +167,9 @@ def check_and_alert(force: bool = False) -> int:
         }
         if ok:
             sent += 1
-            print(f"[ALERT] {key}: 메일 전송 완료 → {ALERT_EMAIL_TO}")
+            print(f"[ALERT] {state_key}: 메일 전송 완료 → {ALERT_EMAIL_TO}")
         else:
-            print(f"[ALERT] {key}: stdout 로그만 (SMTP 미설정 or 실패)")
+            print(f"[ALERT] {state_key}: stdout 로그만 (SMTP 미설정 or 실패)")
 
     _save_state(state)
     return sent

@@ -74,7 +74,7 @@ services:
       - STREAMLIT_SERVER_HEADLESS=true
       - STREAMLIT_SERVER_PORT=8502
       - STREAMLIT_SERVER_ADDRESS=0.0.0.0
-      - STREAMLIT_SERVER_BASEURLPATH=/pikit
+      - STREAMLIT_SERVER_BASEURLPATH=/vault
       - STREAMLIT_BROWSER_GATHERUSAGESTATS=false
       - PIKIT_CACHE_DIR=/app/cache
       # Soneium RPC — Tenderly 우선, 없으면 official 만 사용.
@@ -103,8 +103,14 @@ services:
       - --server.port=8502
       - --server.address=0.0.0.0
       - --server.headless=true
-      - --server.baseUrlPath=/pikit
+      - --server.baseUrlPath=/vault
       - --browser.gatherUsageStats=false
+      # shadcn 3-색 테마 — 이 컨테이너만 적용, 메인 PIKIT 사이트 영향 없음
+      - --theme.base=dark
+      - --theme.primaryColor=#10b981
+      - --theme.backgroundColor=#0a0a0a
+      - --theme.secondaryBackgroundColor=#0a0a0a
+      - --theme.textColor=#fafafa
 
   # ─────────────────────────────────────────────────────────────────
   # PIKIT Vault — 알림 데몬 (1분마다 잔고 체크)

@@ -1,33 +1,37 @@
-"""PIKIT Vault 대시보드 — Soneium 운영 지갑 모니터링.
+"""Vault 대시보드 — 멀티 프로젝트 (PIKIT / Press A / Pnyx) 운영 지갑 모니터링.
 
-화면:
-  1) 메인 — 2 지갑 카드 (잔고, USD, 24h 변동)
-  2) 상세 — 카운터파티 분포, 시간대 입출금, PNL
+URL 라우팅:
+  /vault/                          → 기본 (첫 프로젝트)
+  /vault/?project=pikit            → PIKIT 프로젝트 보기
+  /vault/?project=pikit&wallet=X   → PIKIT 의 wallet X 상세
 
 실행:
-  streamlit run pikit_vault/app.py --server.port 8502
+  streamlit run pikit_vault/app.py --server.port 8502 --server.baseUrlPath /vault
 
-Streamlit 이 스크립트의 부모 폴더만 sys.path 에 넣으므로 (pikit_vault/),
-패키지 자체를 못 찾는 문제 회피용으로 /app 을 직접 추가.
+shadcn 3-색 디자인:
+  background: #0a0a0a (zinc-950)
+  foreground: #fafafa (zinc-50)
+  accent:     #10b981 (emerald-500)
 """
 from __future__ import annotations
 
 import os
 import sys
 
-# pikit_vault 패키지를 절대 import 가능하게 — 스크립트 부모의 부모 (= /app) 를 추가.
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-import time
-from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import streamlit as st
 
-from pikit_vault.config import ALERT_EMAIL_TO, WALLETS, is_smtp_configured
+from pikit_vault.config import (
+    ALERT_EMAIL_TO,
+    PROJECTS,
+    is_smtp_configured,
+)
 from pikit_vault.soneium_client import (
     get_combined_history,
     get_total_usd,
@@ -35,10 +39,90 @@ from pikit_vault.soneium_client import (
 
 
 st.set_page_config(
-    page_title="PIKIT Vault — Soneium",
-    page_icon="🏦",
+    page_title="Vault — Soneium",
+    page_icon="◆",
     layout="wide",
+    initial_sidebar_state="collapsed",
 )
+
+
+# ─────────────────────────────────────────────────────────────────
+# shadcn 3-색 CSS — 모든 기본 컴포넌트 위에 inline 으로 덮어쓰기
+# 색: bg #0a0a0a, fg #fafafa, accent #10b981
+# fg 의 opacity 변형은 별색이 아닌 같은 색의 투명도 → 3색 규칙 유지
+# ─────────────────────────────────────────────────────────────────
+SHADCN_CSS = """
+<style>
+    :root {
+        --bg: #0a0a0a;
+        --fg: #fafafa;
+        --accent: #10b981;
+        --border: rgba(250, 250, 250, 0.08);
+        --muted: rgba(250, 250, 250, 0.55);
+    }
+    .stApp { background: var(--bg); color: var(--fg); }
+    .block-container { padding-top: 2rem; padding-bottom: 4rem; max-width: 1280px; }
+    h1, h2, h3, h4 { color: var(--fg); font-weight: 600; letter-spacing: -0.02em; }
+    h1 { font-size: 2rem; }
+    h2 { font-size: 1.4rem; margin-top: 1.5rem; }
+    h3 { font-size: 1.1rem; }
+    a, a:visited { color: var(--accent); text-decoration: none; }
+    hr { border-color: var(--border); margin: 1.5rem 0; }
+    [data-testid="stMetricLabel"] { color: var(--muted); font-size: 0.85rem; font-weight: 500; }
+    [data-testid="stMetricValue"] { color: var(--fg); font-size: 1.8rem; font-weight: 600; }
+    [data-testid="stMetricDelta"] { color: var(--muted); }
+    .stButton > button {
+        background: transparent; color: var(--fg);
+        border: 1px solid var(--border); border-radius: 8px;
+        padding: 0.5rem 1rem; font-weight: 500;
+        transition: all 0.15s ease;
+    }
+    .stButton > button:hover {
+        border-color: var(--accent); color: var(--accent);
+    }
+    .stButton > button[kind="primary"] {
+        background: var(--accent); color: var(--bg); border-color: var(--accent);
+    }
+    .stButton > button[kind="primary"]:hover {
+        background: var(--fg); color: var(--bg); border-color: var(--fg);
+    }
+    .vault-card {
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 1.5rem 1.75rem;
+        transition: border-color 0.15s ease;
+    }
+    .vault-card:hover { border-color: rgba(250, 250, 250, 0.2); }
+    .vault-card.warn { border-color: var(--accent); }
+    .vault-card.disabled { opacity: 0.5; }
+    .vault-card .label { color: var(--muted); font-size: 0.8rem; font-weight: 500;
+                         text-transform: uppercase; letter-spacing: 0.05em; }
+    .vault-card .addr  { color: var(--muted); font-family: ui-monospace, "JetBrains Mono", monospace;
+                         font-size: 0.78rem; margin: 0.5rem 0 1rem 0; }
+    .vault-card .name  { font-size: 1.2rem; font-weight: 600; color: var(--fg); margin: 0.25rem 0; }
+    .vault-card .value { font-size: 2.4rem; font-weight: 700; color: var(--fg);
+                         letter-spacing: -0.02em; margin: 0.5rem 0; }
+    .vault-card .value.accent { color: var(--accent); }
+    .vault-card .desc  { color: var(--muted); font-size: 0.85rem; }
+    .vault-card .badge { display: inline-block; background: var(--accent); color: var(--bg);
+                         padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem;
+                         font-weight: 600; margin-top: 0.5rem; }
+    .vault-card .meta  { color: var(--muted); font-size: 0.8rem; margin-top: 0.75rem;
+                         font-family: ui-monospace, "JetBrains Mono", monospace; }
+    .proj-pill {
+        display: inline-block; padding: 0.4rem 1rem; border: 1px solid var(--border);
+        border-radius: 9999px; color: var(--muted); font-size: 0.9rem; font-weight: 500;
+        margin-right: 0.5rem; transition: all 0.15s ease; cursor: pointer;
+    }
+    .proj-pill.active { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+    [data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
+        color: var(--accent) !important; border-bottom-color: var(--accent) !important;
+    }
+    [data-testid="stDataFrame"] { border: 1px solid var(--border); border-radius: 8px; }
+</style>
+"""
+st.markdown(SHADCN_CSS, unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -56,142 +140,243 @@ def cached_history(address: str, limit: int = 2000) -> list[dict]:
 
 
 # ─────────────────────────────────────────────────────────────────
-# 메인 / 상세 라우팅 (query param)
+# 쿼리 라우팅
 # ─────────────────────────────────────────────────────────────────
 
-qs = st.query_params
-selected = qs.get("wallet")
-if isinstance(selected, list):
-    selected = selected[0] if selected else None
+def _qp_get(key: str) -> str | None:
+    val = st.query_params.get(key)
+    if isinstance(val, list):
+        return val[0] if val else None
+    return val
 
-if selected and selected in WALLETS:
-    # 상세 페이지
-    wallet = WALLETS[selected]
-    page = "detail"
-else:
-    wallet = None
-    page = "home"
+
+def _set_qp(**kwargs) -> None:
+    """업데이트할 쿼리 키들만 setting (None 이면 제거)."""
+    current = dict(st.query_params)
+    for k, v in kwargs.items():
+        if v is None:
+            current.pop(k, None)
+        else:
+            current[k] = v
+    st.query_params.clear()
+    for k, v in current.items():
+        st.query_params[k] = v
+
+
+project_keys = list(PROJECTS.keys())
+selected_project = _qp_get("project")
+if selected_project not in PROJECTS:
+    selected_project = project_keys[0]
+
+selected_wallet = _qp_get("wallet")
+proj = PROJECTS[selected_project]
+proj_wallets = (proj.get("wallets") or {}) if not proj.get("coming_soon") else {}
+
+if selected_wallet and selected_wallet not in proj_wallets:
+    selected_wallet = None
 
 
 # ─────────────────────────────────────────────────────────────────
 # 사이드바
 # ─────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("### 🏦 PIKIT Vault")
-    st.caption("Soneium 체인 운영 지갑 모니터")
-    st.markdown("---")
-    if st.button("🔄 새로고침", use_container_width=True):
+    st.markdown("### Vault")
+    st.caption("Soneium 운영 지갑 모니터")
+    st.divider()
+    if st.button("새로고침", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
-    st.caption(f"캐시 TTL: 60초")
-    st.markdown("---")
-    st.caption("**알림 설정**")
-    st.caption(f"수신: `{ALERT_EMAIL_TO}`")
-    smtp_ok = is_smtp_configured()
-    st.caption(f"SMTP: {'✅ 설정됨' if smtp_ok else '❌ 미설정 (stdout 로그만)'}")
-    if page == "detail":
-        st.markdown("---")
-        if st.button("← 메인으로", use_container_width=True):
-            st.query_params.clear()
-            st.rerun()
+    st.caption(f"캐시 TTL · 60s")
+    st.divider()
+    st.caption(f"알림 수신 · `{ALERT_EMAIL_TO}`")
+    st.caption(f"SMTP · {'활성' if is_smtp_configured() else '미설정 (로그만)'}")
 
 
 # ─────────────────────────────────────────────────────────────────
-# 메인 페이지 — 2 지갑 카드
+# 헤더 + 프로젝트 셀렉터 (pill 스타일)
 # ─────────────────────────────────────────────────────────────────
-def render_home():
-    st.title("PIKIT Vault")
+
+def _short_addr(addr: str) -> str:
+    addr = (addr or "").strip()
+    if len(addr) < 12:
+        return addr
+    return f"{addr[:8]}…{addr[-6:]}"
+
+
+def render_header() -> None:
+    st.markdown("# Vault")
     st.caption(f"Soneium L2 · 갱신 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-    cols = st.columns(len(WALLETS))
-    for col, (key, w) in zip(cols, WALLETS.items()):
+    # 프로젝트 pill — 버튼 가로 정렬
+    cols = st.columns(len(project_keys) + 1)
+    for col, pkey in zip(cols, project_keys):
+        p = PROJECTS[pkey]
+        label = p["name"]
+        if p.get("coming_soon"):
+            label += " · soon"
         with col:
-            try:
-                info = cached_total_usd(w["address"])
-                total = info["total_usd"]
-                tokens = info["tokens"]
-            except Exception as e:
-                st.error(f"❌ RPC 실패: {e}")
-                continue
-
-            # 임계 미달이면 경고 배지
-            threshold = w.get("alert_threshold_usd")
-            warn = threshold is not None and total < threshold
-
-            border_color = "#d32f2f" if warn else w.get("color", "#888")
-            badge = "⚠️ 임계 미달" if warn else ""
-
-            st.markdown(
-                f"""
-                <div style="border:2px solid {border_color}; border-radius:12px; padding:18px 22px; background:rgba(255,255,255,0.02);">
-                  <div style="font-size:20px; font-weight:600;">
-                    {w.get('icon', '')} {w['name']}
-                  </div>
-                  <div style="font-size:12px; color:#888; margin:6px 0 12px 0; font-family:monospace;">
-                    {w['address'][:10]}…{w['address'][-8:]}
-                  </div>
-                  <div style="font-size:36px; font-weight:700; color:{border_color};">
-                    ${total:,.2f}
-                  </div>
-                  <div style="font-size:13px; color:#aaa; margin-top:6px;">
-                    {w.get('description', '')}
-                  </div>
-                  {f'<div style="margin-top:10px; color:#d32f2f; font-weight:600;">{badge} (임계: ${threshold})</div>' if warn else ''}
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-            # 토큰 보유 미니 리스트
-            if tokens:
-                st.caption("**보유 토큰**")
-                for t in tokens[:5]:
-                    st.write(
-                        f"`{t['symbol']:6s}`  {t['value']:>10,.4f}  "
-                        f"(${t['usd']:,.2f})"
-                    )
-            else:
-                st.caption("토큰 없음 (native ETH 만)")
-
-            st.markdown("")
-            if st.button("📊 상세 보기", key=f"detail_{key}", use_container_width=True, type="primary"):
-                st.query_params["wallet"] = key
+            is_active = pkey == selected_project
+            btn_type = "primary" if is_active else "secondary"
+            if st.button(label, key=f"proj_{pkey}", use_container_width=True, type=btn_type):
+                _set_qp(project=pkey, wallet=None)
                 st.rerun()
 
 
 # ─────────────────────────────────────────────────────────────────
-# 상세 페이지 — 카운터파티, 시계열, PNL
+# 코밍순 화면
 # ─────────────────────────────────────────────────────────────────
-def render_detail(key: str, w: dict):
-    st.title(f"{w.get('icon', '')} {w['name']}")
-    st.caption(f"주소: `{w['address']}`")
 
-    # 잔고 박스
+def render_coming_soon(proj: dict) -> None:
+    st.markdown(
+        f"""
+        <div class="vault-card disabled" style="text-align:center; padding:3rem 2rem;">
+            <div class="label">Coming soon</div>
+            <div class="name" style="font-size:1.5rem; margin-top:0.5rem;">{proj['name']}</div>
+            <div class="desc" style="margin-top:0.75rem;">{proj.get('description', '')}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────
+# 프로젝트 홈 — wallet 카드 그리드
+# ─────────────────────────────────────────────────────────────────
+
+def render_wallet_card(project_key: str, wallet_key: str, wallet: dict) -> None:
+    address = (wallet.get("address") or "").strip()
+    name = wallet.get("name", wallet_key)
+    desc = wallet.get("description", "")
+    threshold = wallet.get("alert_threshold_usd")
+
+    if not address:
+        # 주소 미등록 — placeholder
+        st.markdown(
+            f"""
+            <div class="vault-card disabled">
+                <div class="label">미등록</div>
+                <div class="name">{name}</div>
+                <div class="desc">{desc}</div>
+                <div class="meta">주소가 아직 설정되지 않았습니다 (config.py)</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        return
+
     try:
-        info = cached_total_usd(w["address"])
+        info = cached_total_usd(address)
+        total = info["total_usd"]
+        tokens = info.get("tokens") or []
+    except Exception as e:
+        st.markdown(
+            f"""
+            <div class="vault-card">
+                <div class="label">{wallet.get('kind', '').upper()}</div>
+                <div class="name">{name}</div>
+                <div class="addr">{_short_addr(address)}</div>
+                <div class="desc" style="color:var(--accent)">조회 실패: {e}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        return
+
+    warn = threshold is not None and total < threshold
+    value_class = "accent" if warn else ""
+    card_class = "vault-card warn" if warn else "vault-card"
+
+    tokens_html = ""
+    if tokens:
+        items = "".join(
+            f'<div class="meta">{t["symbol"]} · {t["value"]:,.2f} '
+            f'<span style="opacity:0.6">(${t["usd"]:,.2f})</span></div>'
+            for t in tokens[:3]
+        )
+        tokens_html = f'<div style="margin-top:0.75rem;">{items}</div>'
+
+    badge_html = (
+        f'<div class="badge">임계 미달 · 기준 ${threshold:,.0f}</div>' if warn else ""
+    )
+
+    st.markdown(
+        f"""
+        <div class="{card_class}">
+            <div class="label">{wallet.get('kind', '').upper() or 'WALLET'}</div>
+            <div class="name">{name}</div>
+            <div class="addr">{_short_addr(address)}</div>
+            <div class="value {value_class}">${total:,.2f}</div>
+            <div class="desc">{desc}</div>
+            {tokens_html}
+            {badge_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if st.button("상세 보기", key=f"detail_{project_key}_{wallet_key}",
+                 use_container_width=True):
+        _set_qp(project=project_key, wallet=wallet_key)
+        st.rerun()
+
+
+def render_project_home(project_key: str, proj: dict) -> None:
+    wallets = proj.get("wallets") or {}
+    if not wallets:
+        st.info("이 프로젝트엔 등록된 지갑이 없습니다.")
+        return
+
+    cols = st.columns(len(wallets))
+    for col, (wkey, wallet) in zip(cols, wallets.items()):
+        with col:
+            render_wallet_card(project_key, wkey, wallet)
+
+
+# ─────────────────────────────────────────────────────────────────
+# Wallet 상세
+# ─────────────────────────────────────────────────────────────────
+
+def render_wallet_detail(project_key: str, proj: dict,
+                         wallet_key: str, wallet: dict) -> None:
+    # 상단 — 뒤로가기 + 헤더
+    bcol1, bcol2 = st.columns([1, 6])
+    with bcol1:
+        if st.button("← 프로젝트", use_container_width=True):
+            _set_qp(project=project_key, wallet=None)
+            st.rerun()
+
+    address = wallet["address"]
+    st.markdown(f"## {proj['name']} · {wallet['name']}")
+    st.markdown(
+        f'<div class="addr" style="font-size:0.85rem;">{address}</div>',
+        unsafe_allow_html=True,
+    )
+
+    try:
+        info = cached_total_usd(address)
     except Exception as e:
         st.error(f"RPC 실패: {e}")
         return
 
+    # 잔고 메트릭
     c1, c2, c3 = st.columns(3)
     c1.metric("총 USD", f"${info['total_usd']:,.2f}")
     c2.metric("ETH", f"{info['eth']:.6f}", help=f"${info['eth_usd']:,.2f}")
     c3.metric("토큰 USD", f"${info['tokens_usd']:,.2f}")
 
-    if info["tokens"]:
-        with st.expander("보유 토큰 전체", expanded=False):
+    if info.get("tokens"):
+        with st.expander("보유 토큰 전체"):
             tdf = pd.DataFrame(info["tokens"])
             tdf = tdf[["symbol", "name", "value", "exchange_rate", "usd", "contract"]]
             tdf.columns = ["심볼", "이름", "잔량", "단가($)", "USD", "컨트랙트"]
             st.dataframe(tdf, use_container_width=True, hide_index=True)
 
-    st.markdown("---")
+    st.divider()
+    st.subheader("거래 내역")
 
-    # 거래 내역
-    st.subheader("📜 거래 내역")
     try:
-        with st.spinner("거래 내역 조회 중 (전체 페이지)..."):
-            hist = cached_history(w["address"], limit=2000)
+        with st.spinner("전체 페이지 조회 중..."):
+            hist = cached_history(address, limit=2000)
     except Exception as e:
         st.error(f"내역 조회 실패: {e}")
         return
@@ -204,13 +389,7 @@ def render_detail(key: str, w: dict):
     df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
     df = df.dropna(subset=["timestamp"]).sort_values("timestamp", ascending=False)
 
-    # 기간 필터
-    col_a, col_b = st.columns([1, 3])
-    period = col_a.selectbox(
-        "기간",
-        ["전체", "최근 24시간", "최근 7일", "최근 30일"],
-        index=0,
-    )
+    period = st.selectbox("기간", ["전체", "최근 24시간", "최근 7일", "최근 30일"], index=0)
     now = datetime.now(timezone.utc)
     cutoff: datetime | None = None
     if period == "최근 24시간":
@@ -226,35 +405,27 @@ def render_detail(key: str, w: dict):
         st.info("기간 내 거래 없음")
         return
 
-    # PNL 모드 — 지갑 목적에 따라 계산식이 다름.
-    # income: 수익 계정. PNL = in - out (양수=수익)
-    # treasury: 비용 계정. PNL = -out (음수=내 돈 지출됨)
     pnl_mode = wallet.get("pnl_mode", "income")
-
     total_in_usd = df.loc[df["direction"] == "in", "usd"].fillna(0).sum()
     total_out_usd = df.loc[df["direction"] == "out", "usd"].fillna(0).sum()
 
     if pnl_mode == "treasury":
-        # 비용 계정: 충전(in)은 owner 가 자기 돈 넣은 것 = PNL 영향 0,
-        # 지급(out)만 owner 입장에서 손실로 잡힘.
         pnl_usd = -total_out_usd
         in_label = "총 충전 (입금)"
         out_label = "총 지급 (리워드)"
         pnl_label = "손익 (Owner PNL)"
-        # 시계열 PNL 누적: 지급액만 음수로 누적.
         df["usd_signed"] = df.apply(
-            lambda r: -(r["usd"] or 0) if r["direction"] == "out" else 0,
-            axis=1,
+            lambda r: -(r["usd"] or 0) if r["direction"] == "out" else 0, axis=1,
         )
     else:
-        # 수익 계정: in - out = 수익
         pnl_usd = total_in_usd - total_out_usd
         in_label = "입금 USD"
         out_label = "출금 USD"
         pnl_label = "순 PNL"
         df["usd_signed"] = df.apply(
-            lambda r: (r["usd"] or 0) * (1 if r["direction"] == "in" else -1 if r["direction"] == "out" else 0),
-            axis=1,
+            lambda r: (r["usd"] or 0) * (
+                1 if r["direction"] == "in" else -1 if r["direction"] == "out" else 0
+            ), axis=1,
         )
 
     m1, m2, m3, m4 = st.columns(4)
@@ -263,57 +434,44 @@ def render_detail(key: str, w: dict):
     m3.metric(pnl_label, f"${pnl_usd:,.2f}")
     m4.metric("거래 수", f"{len(df):,}건")
 
-    # 카운터파티 집계
-    st.markdown("---")
-    st.subheader("👥 카운터파티")
-
-    # 입금/출금 별
+    # 카운터파티
+    st.divider()
+    st.subheader("카운터파티")
     cp_in = (
-        df[df["direction"] == "in"]
-        .groupby("counterparty")
+        df[df["direction"] == "in"].groupby("counterparty")
         .agg(건수=("hash", "count"), 합계=("value", "sum"), USD합계=("usd", "sum"))
-        .sort_values("USD합계", ascending=False)
-        .head(20)
+        .sort_values("USD합계", ascending=False).head(20)
     )
     cp_out = (
-        df[df["direction"] == "out"]
-        .groupby("counterparty")
+        df[df["direction"] == "out"].groupby("counterparty")
         .agg(건수=("hash", "count"), 합계=("value", "sum"), USD합계=("usd", "sum"))
-        .sort_values("USD합계", ascending=False)
-        .head(20)
+        .sort_values("USD합계", ascending=False).head(20)
     )
 
-    # 탭 순서 — 모드별로 디폴트 (먼저 보이는) 탭을 다르게.
-    # treasury (Vault): 지급(출금)이 메인 활동 → 출금처 먼저
-    # income (운영 수익): 입금이 메인 활동 → 입금처 먼저
-    def _render_cp(df_cp: pd.DataFrame, empty_msg: str) -> None:
-        if df_cp.empty:
-            st.info(empty_msg)
+    def _render_cp(d: pd.DataFrame, empty: str) -> None:
+        if d.empty:
+            st.info(empty)
         else:
-            df_show = df_cp.reset_index()
+            df_show = d.reset_index()
             df_show["USD합계"] = df_show["USD합계"].round(2)
             df_show["합계"] = df_show["합계"].round(4)
             st.dataframe(df_show, use_container_width=True, hide_index=True)
 
-    in_tab_label = f"📥 입금처 ({len(cp_in)}개)"
-    out_tab_label = f"📤 출금처 ({len(cp_out)}개)"
-
+    in_label_tab = f"입금처 ({len(cp_in)})"
+    out_label_tab = f"출금처 ({len(cp_out)})"
     if pnl_mode == "treasury":
-        tab_out, tab_in = st.tabs([out_tab_label, in_tab_label])
+        tab_out, tab_in = st.tabs([out_label_tab, in_label_tab])
     else:
-        tab_in, tab_out = st.tabs([in_tab_label, out_tab_label])
-
+        tab_in, tab_out = st.tabs([in_label_tab, out_label_tab])
     with tab_out:
         _render_cp(cp_out, "출금 없음")
     with tab_in:
         _render_cp(cp_in, "입금 없음")
 
-    # 시계열 — 일자별 또는 시간대별
-    st.markdown("---")
-    st.subheader("📈 시계열 PNL")
-
+    # 시계열 PNL
+    st.divider()
+    st.subheader("시계열 PNL")
     df_ts = df.copy()
-    # 기간에 따라 bin 자동
     if period == "최근 24시간":
         df_ts["bucket"] = df_ts["timestamp"].dt.floor("h")
         bin_label = "시간"
@@ -321,7 +479,6 @@ def render_detail(key: str, w: dict):
         df_ts["bucket"] = df_ts["timestamp"].dt.floor("D")
         bin_label = "일자"
 
-    # 입금/출금 은 모드 무관하게 raw 합계 — PNL 만 mode 별로 다름 (usd_signed)
     df_ts["usd_in"] = df_ts.apply(
         lambda r: (r["usd"] or 0) if r["direction"] == "in" else 0, axis=1,
     )
@@ -330,11 +487,9 @@ def render_detail(key: str, w: dict):
     )
     agg = (
         df_ts.groupby("bucket")
-        .agg(입금=("usd_in", "sum"),
-             출금=("usd_out", "sum"),
+        .agg(입금=("usd_in", "sum"), 출금=("usd_out", "sum"),
              PNL=("usd_signed", "sum"))
-        .reset_index()
-        .sort_values("bucket")
+        .reset_index().sort_values("bucket")
     )
     agg["누적PNL"] = agg["PNL"].cumsum()
 
@@ -342,16 +497,16 @@ def render_detail(key: str, w: dict):
         st.info("시계열 데이터 없음")
     else:
         st.line_chart(agg.set_index("bucket")[["누적PNL"]])
-        with st.expander(f"{bin_label}별 상세", expanded=False):
+        with st.expander(f"{bin_label}별 상세"):
             display = agg.copy()
             display.columns = [bin_label, "입금($)", "출금($)", "PNL($)", "누적PNL($)"]
             for c in display.columns[1:]:
                 display[c] = display[c].round(2)
             st.dataframe(display, use_container_width=True, hide_index=True)
 
-    # 거래 내역 테이블
-    st.markdown("---")
-    st.subheader("📋 거래 원장")
+    # 거래 원장
+    st.divider()
+    st.subheader("거래 원장")
     show = df.copy()
     show["timestamp"] = show["timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S")
     show = show[["timestamp", "direction", "symbol", "value", "usd", "counterparty", "hash"]]
@@ -364,7 +519,13 @@ def render_detail(key: str, w: dict):
 # ─────────────────────────────────────────────────────────────────
 # 라우팅
 # ─────────────────────────────────────────────────────────────────
-if page == "home":
-    render_home()
+render_header()
+st.divider()
+
+if proj.get("coming_soon"):
+    render_coming_soon(proj)
+elif selected_wallet and selected_wallet in proj_wallets:
+    render_wallet_detail(selected_project, proj,
+                         selected_wallet, proj_wallets[selected_wallet])
 else:
-    render_detail(selected, wallet)
+    render_project_home(selected_project, proj)
