@@ -43,6 +43,11 @@ export type WalletSnapshot = {
 
 export type Direction = "in" | "out" | "self";
 
+export type BalancePoint = {
+  ts: number; // epoch ms
+  value: number; // USD
+};
+
 export type Transfer = {
   hash: string;
   timestamp: string; // ISO

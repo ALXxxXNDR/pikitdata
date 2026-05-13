@@ -1,4 +1,10 @@
-import type { Direction, TokenHolding, Transfer, WalletSnapshot } from "./types";
+import type {
+  BalancePoint,
+  Direction,
+  TokenHolding,
+  Transfer,
+  WalletSnapshot,
+} from "./types";
 
 const BLOCKSCOUT_BASE = "https://soneium.blockscout.com/api/v2";
 const COINGECKO_ETH = "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd";
@@ -258,21 +264,34 @@ export function computeAllocation(tokens: TokenHolding[], ethUsd: number): Alloc
   return rows;
 }
 
-export function buildSparkline(history: Transfer[], buckets = 26): number[] {
-  // 활동의 cumulative net (USD) 을 시간순으로 24~26 포인트로 압축
-  if (history.length === 0) return new Array(buckets).fill(0);
-  const sorted = [...history].sort((a, b) =>
-    a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0,
-  );
-  let cum = 0;
-  const points: number[] = [];
-  const step = Math.max(1, Math.floor(sorted.length / buckets));
-  for (let i = 0; i < sorted.length; i++) {
-    const t = sorted[i];
-    const sign = t.direction === "in" ? 1 : t.direction === "out" ? -1 : 0;
-    cum += sign * (t.usd ?? 0);
-    if (i % step === 0) points.push(cum);
+export function buildBalanceCurve(
+  currentUsd: number,
+  history: Transfer[],
+): BalancePoint[] {
+  // 거래 내역을 역방향으로 적용해서 시간별 잔고 곡선 재구성.
+  // 가정: 현재 USD 가치 기준의 잔고. (과거 시점의 정확한 USD 가치는 모름 —
+  // stablecoin 위주 wallet 이라 큰 오차 없음. 비-stablecoin 이라면 표시 가치는
+  // 액면가 ± 현재 환율로 근사.)
+  if (history.length === 0) {
+    return [{ ts: Date.now(), value: currentUsd }];
   }
-  if (points.length < 2) points.push(cum);
-  return points;
+  const sorted = [...history].sort((a, b) =>
+    a.timestamp > b.timestamp ? -1 : a.timestamp < b.timestamp ? 1 : 0,
+  );
+  let balance = currentUsd;
+  const points: BalancePoint[] = [{ ts: Date.now(), value: balance }];
+  for (const t of sorted) {
+    const ts = new Date(t.timestamp).getTime();
+    if (!Number.isFinite(ts)) continue;
+    const effect =
+      t.direction === "in"
+        ? t.usd ?? 0
+        : t.direction === "out"
+          ? -(t.usd ?? 0)
+          : 0;
+    balance = balance - effect;
+    points.push({ ts, value: Math.max(0, balance) });
+  }
+  // 시간 오름차순으로 반환 (차트는 left→right 시간 순)
+  return points.reverse();
 }

@@ -7,9 +7,10 @@ import { AssetsList, holdingsToItems } from "@/components/assets-list";
 import { ActivityList } from "@/components/activity-list";
 import { ComingSoon } from "@/components/coming-soon";
 import { WalletDetail } from "@/components/wallet-detail";
+import { TrackingRow } from "@/components/tracking-row";
 import { PROJECTS, getProject } from "@/lib/projects";
 import {
-  buildSparkline,
+  buildBalanceCurve,
   computeAllocation,
   getCombinedHistory,
   getWalletSnapshot,
@@ -41,6 +42,7 @@ export default async function Page({
             현재 프로젝트
           </div>
           <ProjectSwitcher projects={PROJECTS} currentKey={project.key} />
+          {!project.comingSoon && <TrackingRow wallets={project.wallets} />}
         </div>
         <ProjectMeta
           walletCount={project.wallets.length}
@@ -158,24 +160,11 @@ async function ProjectOverview({ projectKey }: { projectKey: string }) {
   const allocation: Allocation[] = computeAllocation(aggTokens, totalEthUsd);
   const assetItems = holdingsToItems(aggTokens, totalEthUsd, totalEthAmt);
 
-  // 24h 변화 — 최근 24h 의 net USD 흐름 합산
-  const since = Date.now() - 24 * 3600 * 1000;
-  let delta24h = 0;
-  for (const h of histories) {
-    for (const t of h) {
-      const ts = new Date(t.timestamp).getTime();
-      if (ts < since) continue;
-      const usd = t.usd ?? 0;
-      delta24h += t.direction === "in" ? usd : t.direction === "out" ? -usd : 0;
-    }
-  }
-  const deltaPct = totalUsd > 0 ? (delta24h / totalUsd) * 100 : 0;
-
-  // 스파크라인 — 모든 활동의 cumulative net USD
+  // 총자산 곡선 — 현재 잔고에서 역방향으로 거래 적용
   const allHistory = histories.flat();
-  const spark = buildSparkline(allHistory);
+  const balanceCurve = buildBalanceCurve(totalUsd, allHistory);
 
-  // 활동 — 최근 8건
+  // 활동 — 최근 12건
   const allRecent = allHistory
     .sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1))
     .slice(0, 12);
@@ -193,12 +182,7 @@ async function ProjectOverview({ projectKey }: { projectKey: string }) {
   return (
     <>
       <section className="grid gap-6 mt-3" style={{ gridTemplateColumns: "1.4fr 1fr" }}>
-        <HeroTotal
-          totalUsd={totalUsd}
-          deltaPct={deltaPct}
-          deltaAbs={delta24h}
-          spark={spark}
-        />
+        <HeroTotal totalUsd={totalUsd} curve={balanceCurve} />
         <AllocationCard items={allocation} />
       </section>
 
