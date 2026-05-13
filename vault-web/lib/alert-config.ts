@@ -4,10 +4,10 @@
  * 읽기: @vercel/edge-config (EDGE_CONFIG env 자동 감지, 매우 빠름)
  * 쓰기: Vercel REST API PATCH (VERCEL_API_TOKEN 필요, 전파 ~30초)
  *
- * 키 구조 (flat key/value):
- *   "alert:cfg:pikit:revenue"      → AlertConfig JSON
- *   "alert:cfg:pikit:reward_vault" → ...
- *   "alert:state:pikit:revenue"    → AlertState JSON (cooldown 추적)
+ * 키 구조 (flat — Edge Config 는 키에 alphanumeric/_/-/ 만 허용):
+ *   "alert_cfg_pikit_revenue"      → AlertConfig
+ *   "alert_cfg_pikit_reward_vault" → ...
+ *   "alert_state_pikit_revenue"    → AlertState (cooldown 추적)
  *
  * env 미설정 시: lib/projects.ts 의 alertThresholdUsd 정적 fallback.
  */
@@ -28,8 +28,8 @@ export type AlertState = {
   lastTotal: number;
 };
 
-const CFG_PREFIX = "alert:cfg:";
-const STATE_PREFIX = "alert:state:";
+const CFG_PREFIX = "alert_cfg_";
+const STATE_PREFIX = "alert_state_";
 
 // ─────────────────────────────────────────────────────────────────
 // 설정 감지
@@ -63,11 +63,11 @@ function vercelTeamId(): string | null {
 // ─────────────────────────────────────────────────────────────────
 
 function cfgKey(projectKey: string, walletKey: string): string {
-  return `${CFG_PREFIX}${projectKey}:${walletKey}`;
+  return `${CFG_PREFIX}${projectKey}_${walletKey}`;
 }
 
 function stateKey(projectKey: string, walletKey: string): string {
-  return `${STATE_PREFIX}${projectKey}:${walletKey}`;
+  return `${STATE_PREFIX}${projectKey}_${walletKey}`;
 }
 
 function parseConfig(raw: unknown): AlertConfig | null {
@@ -158,7 +158,12 @@ export async function getAllAlertConfigs(): Promise<
     for (const [k, v] of Object.entries(all)) {
       if (!k.startsWith(CFG_PREFIX)) continue;
       const parsed = parseConfig(v);
-      if (parsed) out[k.slice(CFG_PREFIX.length)] = parsed;
+      if (parsed) {
+        // 키에 첫 '_' 는 project/wallet 구분자가 아니라 그냥 _. 마지막 '_'
+        // 를 구분자로 쓰는 것보다 projectKey/walletKey 명확히 알기 위해
+        // PROJECTS 와 매칭. 일단 raw key 만 반환 (호출자가 알아서).
+        out[k.slice(CFG_PREFIX.length)] = parsed;
+      }
     }
     return out;
   } catch {
