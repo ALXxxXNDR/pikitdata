@@ -42,23 +42,8 @@ export function WalletsTable({ projectKey, rows }: Props) {
           className="m-0 text-[26px]"
           style={{ fontFamily: `var(--font-instrument-serif), "Instrument Serif", serif`, letterSpacing: "-0.01em" }}
         >
-          지갑
+          Contract
         </h2>
-        <div
-          className="flex gap-1 p-0.5 rounded-full bg-ink-06 text-[12px]"
-        >
-          <button
-            className="px-3 py-1 rounded-full bg-white"
-            style={{
-              boxShadow:
-                "0 1px 2px color-mix(in srgb, var(--color-ink) 10%, transparent)",
-            }}
-          >
-            전체
-          </button>
-          <button className="px-3 py-1 rounded-full ink-60">수익</button>
-          <button className="px-3 py-1 rounded-full ink-60">리워드</button>
-        </div>
       </div>
       <table className="w-full border-collapse text-[13.5px]">
         <thead>

@@ -1,15 +1,18 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Sparkline } from "./sparkline";
 import type { BalancePoint } from "@/lib/types";
 
-type Range = "24h" | "7d" | "30d" | "all";
+type Range = "24h" | "7d" | "30d" | "3m" | "6m" | "1y" | "all";
 
 const RANGES: { value: Range; label: string }[] = [
   { value: "24h", label: "지난 24시간" },
   { value: "7d", label: "지난 7일" },
   { value: "30d", label: "지난 30일" },
+  { value: "3m", label: "지난 3개월" },
+  { value: "6m", label: "지난 6개월" },
+  { value: "1y", label: "지난 1년" },
   { value: "all", label: "전체" },
 ];
 
@@ -17,13 +20,106 @@ function rangeMs(r: Range): number | null {
   if (r === "all") return null;
   if (r === "24h") return 24 * 3600_000;
   if (r === "7d") return 7 * 86400_000;
-  return 30 * 86400_000;
+  if (r === "30d") return 30 * 86400_000;
+  if (r === "3m") return 90 * 86400_000;
+  if (r === "6m") return 180 * 86400_000;
+  return 365 * 86400_000; // 1y
 }
 
 type Props = {
   totalUsd: number;
   curve: BalancePoint[];
 };
+
+// ─────────────────────────────────────────────────────────────────
+// 커스텀 드롭다운 — 테마 매칭 (pill + popover)
+// ─────────────────────────────────────────────────────────────────
+function RangeDropdown({
+  value,
+  onChange,
+}: {
+  value: Range;
+  onChange: (r: Range) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const current = RANGES.find((r) => r.value === value) ?? RANGES[0];
+
+  useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("click", onDoc);
+    return () => document.removeEventListener("click", onDoc);
+  }, []);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-[12px] border border-ink-12 hover:bg-ink-06 ink-60 cursor-pointer"
+      >
+        <span>{current.label}</span>
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          width="11"
+          height="11"
+          className={`transition-transform ${open ? "rotate-180" : ""}`}
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+
+      {open && (
+        <div
+          className="absolute right-0 top-full mt-2 bg-white border border-ink-12 rounded-[12px] p-1 z-20 min-w-[160px]"
+          style={{
+            boxShadow:
+              "0 12px 32px -12px color-mix(in srgb, var(--color-ink) 20%, transparent)",
+          }}
+        >
+          {RANGES.map((r) => {
+            const active = r.value === value;
+            return (
+              <button
+                key={r.value}
+                type="button"
+                onClick={() => {
+                  onChange(r.value);
+                  setOpen(false);
+                }}
+                className={`w-full text-left px-3 py-2 rounded-[8px] text-[12.5px] hover:bg-ink-06 flex items-center justify-between cursor-pointer ${
+                  active ? "bg-ink-06" : ""
+                }`}
+              >
+                <span>{r.label}</span>
+                {active && (
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="var(--color-accent)"
+                    strokeWidth="2.4"
+                    width="14"
+                    height="14"
+                  >
+                    <polyline points="5 12 10 17 19 8" />
+                  </svg>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function HeroTotal({ totalUsd, curve }: Props) {
   const [range, setRange] = useState<Range>("24h");
@@ -33,10 +129,7 @@ export function HeroTotal({ totalUsd, curve }: Props) {
     if (ms === null) return curve;
     const cutoff = Date.now() - ms;
     const inRange = curve.filter((p) => p.ts >= cutoff);
-    // 첫 시점이 cutoff 보다 뒤라면 (= 그 사이 거래 없음) cutoff 기준 시작점도 채워
-    // 평탄한 선이 나오게.
     if (inRange.length === 0 || inRange[0].ts > cutoff) {
-      // cutoff 시점 직전의 마지막 잔고 = inRange 직전 포인트의 value
       const idxFirstInRange = curve.findIndex((p) => p.ts >= cutoff);
       const priorValue =
         idxFirstInRange > 0
@@ -47,7 +140,6 @@ export function HeroTotal({ totalUsd, curve }: Props) {
     return inRange;
   }, [range, curve, totalUsd]);
 
-  // 델타 = 끝 - 시작 (filtered 기준)
   const first = filtered[0]?.value ?? totalUsd;
   const last = filtered[filtered.length - 1]?.value ?? totalUsd;
   const deltaAbs = last - first;
@@ -67,17 +159,7 @@ export function HeroTotal({ totalUsd, curve }: Props) {
         <div className="text-[12px] ink-45 uppercase tracking-[0.12em]">
           총 자산 (USD)
         </div>
-        <select
-          className="range-select bg-transparent border border-ink-12 rounded-full px-3 py-1.5 text-[12px] ink-60 cursor-pointer"
-          value={range}
-          onChange={(e) => setRange(e.target.value as Range)}
-        >
-          {RANGES.map((r) => (
-            <option key={r.value} value={r.value}>
-              {r.label}
-            </option>
-          ))}
-        </select>
+        <RangeDropdown value={range} onChange={setRange} />
       </div>
       <div>
         <div

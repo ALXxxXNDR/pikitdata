@@ -48,3 +48,20 @@ body {
 
 /* 부드러운 트랜지션 */
 button { transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease; }
+
+/* 하트비트 펄스 — 스캔 진행 표시 */
+@keyframes heartbeat {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%      { transform: scale(1.8); opacity: 0.35; }
+}
+.heartbeat-pulse {
+  animation: heartbeat 0.85s ease-in-out infinite;
+}
+
+/* 회전 — 새로고침 아이콘 스피너 */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.spin-icon {
+  animation: spin 0.9s linear infinite;
+}

@@ -6,6 +6,7 @@ import { WalletsTable } from "@/components/wallets-table";
 import { AssetsList, holdingsToItems } from "@/components/assets-list";
 import { ActivityList } from "@/components/activity-list";
 import { ComingSoon } from "@/components/coming-soon";
+import { LiveTimestamp } from "@/components/live-timestamp";
 import { WalletDetail } from "@/components/wallet-detail";
 import { PROJECTS, getProject } from "@/lib/projects";
 import {
@@ -45,6 +46,7 @@ export default async function Page({
         <ProjectMeta
           walletCount={project.wallets.length}
           chainCount={project.comingSoon ? 0 : 1}
+          serverTimeMs={Date.now()}
         />
       </section>
 
@@ -76,9 +78,11 @@ export default async function Page({
 function ProjectMeta({
   walletCount,
   chainCount,
+  serverTimeMs,
 }: {
   walletCount: number;
   chainCount: number;
+  serverTimeMs: number;
 }) {
   return (
     <div className="flex gap-8 items-end ink-60 text-[13px]">
@@ -104,9 +108,9 @@ function ProjectMeta({
         업데이트
         <b
           className="block text-[15px] font-medium mt-0.5"
-          style={{ color: "var(--color-ink)", fontFamily: "var(--font-mono)" }}
+          style={{ color: "var(--color-ink)" }}
         >
-          방금 전
+          <LiveTimestamp serverTimeMs={serverTimeMs} />
         </b>
       </div>
     </div>

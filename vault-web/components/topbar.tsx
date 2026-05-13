@@ -1,5 +1,6 @@
 import Image from "next/image";
 import { auth, signOut } from "@/auth";
+import { RefreshControl } from "./refresh-control";
 
 export async function Topbar() {
   const session = await auth();
@@ -28,13 +29,7 @@ export async function Topbar() {
         <small className="ink-45 font-normal ml-1">· 프로젝트 대시보드</small>
       </div>
       <div className="flex items-center gap-2.5">
-        <span className="inline-flex items-center gap-2 px-3.5 py-2 rounded-full text-[13px] border border-ink-12">
-          <span
-            className="block w-1.5 h-1.5 rounded-full"
-            style={{ background: "var(--color-accent)" }}
-          />
-          실시간 동기화
-        </span>
+        <RefreshControl />
 
         {user ? (
           <>

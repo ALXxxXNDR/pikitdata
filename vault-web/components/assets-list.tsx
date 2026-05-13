@@ -22,18 +22,6 @@ export function AssetsList({ items }: Props) {
         >
           보유 자산
         </h2>
-        <div className="flex gap-1 p-0.5 rounded-full bg-ink-06 text-[12px]">
-          <button
-            className="px-3 py-1 rounded-full bg-white"
-            style={{
-              boxShadow:
-                "0 1px 2px color-mix(in srgb, var(--color-ink) 10%, transparent)",
-            }}
-          >
-            USD
-          </button>
-          <button className="px-3 py-1 rounded-full ink-60">토큰</button>
-        </div>
       </div>
       <div className="flex flex-col">
         {items.length === 0 && (
