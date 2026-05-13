@@ -1,3 +1,4 @@
+import type { Allocation } from "@/lib/soneium";
 import type { TokenHolding } from "@/lib/types";
 
 type Item = {
@@ -10,18 +11,94 @@ type Item = {
 
 type Props = {
   items: Item[];
+  allocation?: Allocation[];
 };
 
-export function AssetsList({ items }: Props) {
+// 3색 팔레트 안에서 ink 톤 변형 4분할 (자산 분포 막대 + 점)
+function shade(i: number): string {
+  const shades = [
+    "var(--color-ink)",
+    "color-mix(in srgb, var(--color-ink) 55%, var(--color-bg))",
+    "color-mix(in srgb, var(--color-ink) 30%, var(--color-bg))",
+    "var(--color-accent)",
+  ];
+  return shades[i % shades.length];
+}
+
+function AllocationSection({ items }: { items: Allocation[] }) {
+  if (items.length === 0) return null;
+  return (
+    <div className="mb-6">
+      <div className="text-[12px] ink-45 uppercase tracking-[0.12em] mb-3">
+        자산 분포
+      </div>
+      <div className="flex h-2 rounded-full overflow-hidden bg-ink-06">
+        {items.map((c, i) => (
+          <span
+            key={c.name + i}
+            className="block h-full"
+            style={{ width: `${c.pct}%`, background: shade(i) }}
+          />
+        ))}
+      </div>
+      <div className="mt-3 flex flex-col gap-2">
+        {items.map((c, i) => (
+          <div
+            key={c.name + i}
+            className="grid items-center gap-3 text-[12.5px]"
+            style={{ gridTemplateColumns: "10px 1fr auto auto" }}
+          >
+            <span
+              className="w-2 h-2 rounded-full block"
+              style={{ background: shade(i) }}
+            />
+            <span>{c.name}</span>
+            <span
+              className="ink-45 min-w-[40px] text-right"
+              style={{ fontFamily: "var(--font-mono)" }}
+            >
+              {c.pct.toFixed(1)}%
+            </span>
+            <span
+              className="min-w-[88px] text-right"
+              style={{ fontFamily: "var(--font-mono)" }}
+            >
+              $
+              {c.usd.toLocaleString("en-US", {
+                maximumFractionDigits: 2,
+              })}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function AssetsList({ items, allocation }: Props) {
   return (
     <div className="bg-white border border-ink-12 rounded-[18px] p-7">
       <div className="flex items-center justify-between mb-5">
         <h2
           className="m-0 text-[26px]"
-          style={{ fontFamily: `var(--font-instrument-serif), "Instrument Serif", serif`, letterSpacing: "-0.01em" }}
+          style={{
+            fontFamily: `var(--font-instrument-serif), "Instrument Serif", serif`,
+            letterSpacing: "-0.01em",
+          }}
         >
           보유 자산
         </h2>
+      </div>
+
+      {allocation && allocation.length > 0 && (
+        <>
+          <AllocationSection items={allocation} />
+          <div className="h-px bg-ink-06 -mx-1 mb-5" />
+        </>
+      )}
+
+      <div className="text-[12px] ink-45 uppercase tracking-[0.12em] mb-2">
+        보유 현황
       </div>
       <div className="flex flex-col">
         {items.length === 0 && (
@@ -55,7 +132,8 @@ export function AssetsList({ items }: Props) {
                 className="text-[13.5px]"
                 style={{ fontFamily: "var(--font-mono)" }}
               >
-                ${a.usd.toLocaleString("en-US", {
+                $
+                {a.usd.toLocaleString("en-US", {
                   minimumFractionDigits: 2,
                   maximumFractionDigits: 2,
                 })}

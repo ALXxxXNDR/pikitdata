@@ -49,6 +49,15 @@ export type BalancePoint = {
   value: number; // USD
 };
 
+// HeroTotal 의 contract 셀렉터에 쓰이는 옵션 단위.
+// '_all' 은 프로젝트 전체 합계를 의미.
+export type WalletOption = {
+  key: string; // "_all" | wallet.key
+  name: string; // "전체" | wallet.name
+  totalUsd: number;
+  curve: BalancePoint[];
+};
+
 export type Transfer = {
   hash: string;
   timestamp: string; // ISO

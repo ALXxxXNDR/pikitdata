@@ -2,8 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Sparkline } from "./sparkline";
-import type { BalancePoint } from "@/lib/types";
+import type { BalancePoint, WalletOption } from "@/lib/types";
 
+// ─────────────────────────────────────────────────────────────────
+// 기간 셀렉터 옵션
+// ─────────────────────────────────────────────────────────────────
 type Range = "24h" | "7d" | "30d" | "3m" | "6m" | "1y" | "all";
 
 const RANGES: { value: Range; label: string }[] = [
@@ -23,16 +26,11 @@ function rangeMs(r: Range): number | null {
   if (r === "30d") return 30 * 86400_000;
   if (r === "3m") return 90 * 86400_000;
   if (r === "6m") return 180 * 86400_000;
-  return 365 * 86400_000; // 1y
+  return 365 * 86400_000;
 }
 
-type Props = {
-  totalUsd: number;
-  curve: BalancePoint[];
-};
-
 // ─────────────────────────────────────────────────────────────────
-// 커스텀 드롭다운 — 테마 매칭 (pill + popover)
+// 기간 드롭다운 (테마 매칭 pill + popover)
 // ─────────────────────────────────────────────────────────────────
 function RangeDropdown({
   value,
@@ -76,7 +74,6 @@ function RangeDropdown({
           <polyline points="6 9 12 15 18 9" />
         </svg>
       </button>
-
       {open && (
         <div
           className="absolute right-0 top-full mt-2 bg-white border border-ink-12 rounded-[12px] p-1 z-20 min-w-[160px]"
@@ -121,8 +118,125 @@ function RangeDropdown({
   );
 }
 
-export function HeroTotal({ totalUsd, curve }: Props) {
+// ─────────────────────────────────────────────────────────────────
+// Contract 셀렉터 — '총 자산' 라벨 자체가 드롭다운 trigger
+// ─────────────────────────────────────────────────────────────────
+function ContractDropdown({
+  options,
+  value,
+  onChange,
+}: {
+  options: WalletOption[];
+  value: string;
+  onChange: (key: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const current = options.find((o) => o.key === value) ?? options[0];
+  const label =
+    current.key === "_all" ? "총 자산 (USD)" : `${current.name} (USD)`;
+
+  useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("click", onDoc);
+    return () => document.removeEventListener("click", onDoc);
+  }, []);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        className="inline-flex items-center gap-2 text-[12px] ink-45 uppercase tracking-[0.12em] hover:text-ink cursor-pointer"
+      >
+        <span>{label}</span>
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          width="11"
+          height="11"
+          className={`transition-transform ${open ? "rotate-180" : ""}`}
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+      {open && (
+        <div
+          className="absolute left-0 top-full mt-2 bg-white border border-ink-12 rounded-[12px] p-1 z-20 min-w-[240px]"
+          style={{
+            boxShadow:
+              "0 12px 32px -12px color-mix(in srgb, var(--color-ink) 20%, transparent)",
+          }}
+        >
+          {options.map((o) => {
+            const active = o.key === value;
+            return (
+              <button
+                key={o.key}
+                type="button"
+                onClick={() => {
+                  onChange(o.key);
+                  setOpen(false);
+                }}
+                className={`w-full text-left px-3 py-2 rounded-[8px] text-[12.5px] hover:bg-ink-06 flex items-center justify-between cursor-pointer ${
+                  active ? "bg-ink-06" : ""
+                }`}
+              >
+                <span className="flex flex-col leading-tight">
+                  <span className="font-medium normal-case tracking-normal">
+                    {o.name}
+                  </span>
+                  <span
+                    className="ink-45 text-[11px] mt-0.5"
+                    style={{ fontFamily: "var(--font-mono)" }}
+                  >
+                    $
+                    {o.totalUsd.toLocaleString("en-US", {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </span>
+                </span>
+                {active && (
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="var(--color-accent)"
+                    strokeWidth="2.4"
+                    width="14"
+                    height="14"
+                  >
+                    <polyline points="5 12 10 17 19 8" />
+                  </svg>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// 메인
+// ─────────────────────────────────────────────────────────────────
+type Props = { options: WalletOption[] };
+
+export function HeroTotal({ options }: Props) {
+  const [selectedKey, setSelectedKey] = useState<string>(options[0]?.key ?? "_all");
   const [range, setRange] = useState<Range>("24h");
+
+  const selected = options.find((o) => o.key === selectedKey) ?? options[0];
+  const curve = selected?.curve ?? [];
+  const totalUsd = selected?.totalUsd ?? 0;
 
   const filtered = useMemo<BalancePoint[]>(() => {
     const ms = rangeMs(range);
@@ -147,32 +261,33 @@ export function HeroTotal({ totalUsd, curve }: Props) {
   const up = deltaAbs >= 0;
   const intPart = "$" + Math.floor(totalUsd).toLocaleString("en-US");
   const decPart = "." + totalUsd.toFixed(2).split(".")[1];
-
   const rangeSuffix = RANGES.find((r) => r.value === range)?.label.replace(
     "지난 ",
     "",
   );
 
   return (
-    <div className="bg-white border border-ink-12 rounded-[18px] p-7 flex flex-col justify-between min-h-[260px]">
+    <div className="bg-white border border-ink-12 rounded-[18px] p-7 flex flex-col gap-5 min-h-[280px]">
       <div className="flex justify-between items-start">
-        <div className="text-[12px] ink-45 uppercase tracking-[0.12em]">
-          총 자산 (USD)
-        </div>
+        <ContractDropdown
+          options={options}
+          value={selectedKey}
+          onChange={setSelectedKey}
+        />
         <RangeDropdown value={range} onChange={setRange} />
       </div>
-      <div>
+
+      <div className="flex flex-col gap-3">
         <div
-          className="my-4"
           style={{
             fontFamily: `var(--font-instrument-serif), "Instrument Serif", serif`,
-            fontSize: "88px",
+            fontSize: "104px",
             lineHeight: 1,
-            letterSpacing: "-0.03em",
+            letterSpacing: "-0.035em",
           }}
         >
           <span>{intPart}</span>
-          <span className="ink-45 text-[46px]">{decPart}</span>
+          <span className="ink-45 text-[56px]">{decPart}</span>
         </div>
         <div className="inline-flex items-center gap-2.5 text-[14px]">
           <span
@@ -196,8 +311,10 @@ export function HeroTotal({ totalUsd, curve }: Props) {
           </span>
         </div>
       </div>
-      <div className="mt-4">
-        <Sparkline points={filtered} />
+
+      {/* 전폭이라 sparkline 높이 두 배 정도 */}
+      <div className="mt-auto">
+        <Sparkline points={filtered} height={120} />
       </div>
     </div>
   );

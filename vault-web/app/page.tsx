@@ -1,7 +1,6 @@
 import { Topbar } from "@/components/topbar";
 import { ProjectSwitcher } from "@/components/project-switcher";
 import { HeroTotal } from "@/components/hero-total";
-import { AllocationCard } from "@/components/allocation-card";
 import { WalletsTable } from "@/components/wallets-table";
 import { AssetsList, holdingsToItems } from "@/components/assets-list";
 import { ActivityList } from "@/components/activity-list";
@@ -16,7 +15,12 @@ import {
   getWalletSnapshot,
 } from "@/lib/soneium";
 import type { Allocation } from "@/lib/soneium";
-import type { TokenHolding, Transfer, WalletSnapshot } from "@/lib/types";
+import type {
+  TokenHolding,
+  Transfer,
+  WalletOption,
+  WalletSnapshot,
+} from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 60;
@@ -162,9 +166,25 @@ async function ProjectOverview({ projectKey }: { projectKey: string }) {
   const allocation: Allocation[] = computeAllocation(aggTokens, totalEthUsd);
   const assetItems = holdingsToItems(aggTokens, totalEthUsd, totalEthAmt);
 
-  // 총자산 곡선 — 현재 잔고에서 역방향으로 거래 적용
+  // 총자산 곡선 — 현재 잔고에서 역방향으로 거래 적용 (전체 합계)
   const allHistory = histories.flat();
   const balanceCurve = buildBalanceCurve(totalUsd, allHistory);
+
+  // contract 셀렉터 옵션 — 전체 + 각 활성 지갑
+  const walletOptions: WalletOption[] = [
+    { key: "_all", name: "전체 (Total)", totalUsd, curve: balanceCurve },
+    ...activeWallets.map((w, i) => {
+      const snap = snapshots[i];
+      const hist = histories[i] ?? [];
+      const wTotal = snap?.totalUsd ?? 0;
+      return {
+        key: w.key,
+        name: w.name,
+        totalUsd: wTotal,
+        curve: buildBalanceCurve(wTotal, hist),
+      };
+    }),
+  ];
 
   // 활동 — 최근 12건
   const allRecent = allHistory
@@ -183,14 +203,16 @@ async function ProjectOverview({ projectKey }: { projectKey: string }) {
 
   return (
     <>
-      <section className="grid gap-6 mt-3" style={{ gridTemplateColumns: "1.4fr 1fr" }}>
-        <HeroTotal totalUsd={totalUsd} curve={balanceCurve} />
-        <AllocationCard items={allocation} />
+      <section className="mt-3">
+        <HeroTotal options={walletOptions} />
       </section>
 
-      <section className="grid gap-6 mt-6" style={{ gridTemplateColumns: "1.6fr 1fr" }}>
+      <section
+        className="grid gap-6 mt-6"
+        style={{ gridTemplateColumns: "1.6fr 1fr" }}
+      >
         <WalletsTable projectKey={project.key} rows={rows} />
-        <AssetsList items={assetItems} />
+        <AssetsList items={assetItems} allocation={allocation} />
       </section>
 
       <ActivityList items={allRecent} />

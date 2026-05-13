@@ -7,7 +7,7 @@ const VB_W = 600;
 const VB_H = 64;
 const PAD = 4;
 
-type Props = { points: BalancePoint[] };
+type Props = { points: BalancePoint[]; height?: number };
 
 function fmtDate(ts: number): string {
   const d = new Date(ts);
@@ -21,7 +21,7 @@ function fmtUsd(v: number): string {
   })}`;
 }
 
-export function Sparkline({ points }: Props) {
+export function Sparkline({ points, height = 64 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
@@ -41,7 +41,10 @@ export function Sparkline({ points }: Props) {
 
   if (xyPoints.length < 2) {
     return (
-      <div className="w-full h-16 grid place-items-center ink-45 text-[12px]">
+      <div
+        className="w-full grid place-items-center ink-45 text-[12px]"
+        style={{ height }}
+      >
         데이터 부족
       </div>
     );
@@ -74,7 +77,8 @@ export function Sparkline({ points }: Props) {
   return (
     <div
       ref={wrapRef}
-      className="relative w-full h-16"
+      className="relative w-full"
+      style={{ height }}
       onMouseMove={onMove}
       onMouseLeave={onLeave}
     >
