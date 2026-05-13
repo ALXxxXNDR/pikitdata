@@ -1,8 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ActivityList } from "./activity-list";
+import { AlertConfigCard } from "./alert-config-card";
+import { Pagination } from "./pagination";
+import type { AlertConfig } from "@/lib/alert-config";
 import type {
   ProjectConfig,
   Transfer,
@@ -15,9 +18,18 @@ type Props = {
   wallet: WalletConfig;
   snapshot: WalletSnapshot | null;
   history: Transfer[];
+  alertConfig: AlertConfig;
+  kvConfigured: boolean;
 };
 
-export function WalletDetail({ project, wallet, snapshot, history }: Props) {
+export function WalletDetail({
+  project,
+  wallet,
+  snapshot,
+  history,
+  alertConfig,
+  kvConfigured,
+}: Props) {
   const totalIn = history
     .filter((t) => t.direction === "in")
     .reduce((s, t) => s + (t.usd ?? 0), 0);
@@ -55,6 +67,16 @@ export function WalletDetail({ project, wallet, snapshot, history }: Props) {
       </h2>
       <p className="ink-60 text-[14px] mt-1">{wallet.description}</p>
 
+      <div className="mt-6">
+        <AlertConfigCard
+          projectKey={project.key}
+          walletKey={wallet.key}
+          walletName={wallet.name}
+          initial={alertConfig}
+          kvConfigured={kvConfigured}
+        />
+      </div>
+
       <section
         className="grid gap-6 mt-6"
         style={{ gridTemplateColumns: "repeat(4, 1fr)" }}
@@ -76,7 +98,7 @@ export function WalletDetail({ project, wallet, snapshot, history }: Props) {
         <TokensSection snapshot={snapshot} />
       </section>
 
-      <ActivityList items={history} limit={20} />
+      <ActivityList items={history} />
     </>
   );
 }
@@ -238,12 +260,39 @@ function CounterpartySection({
       <div className="ink-45 text-[12px] uppercase tracking-[0.12em] mt-4 mb-2">
         {primaryLabel}
       </div>
-      <CpRows items={primary} />
+      <PaginatedRows items={primary} resetKey={query + "_primary"} />
       <div className="ink-45 text-[12px] uppercase tracking-[0.12em] mt-6 mb-2">
         {secondaryLabel}
       </div>
-      <CpRows items={secondary} />
+      <PaginatedRows items={secondary} resetKey={query + "_secondary"} />
     </div>
+  );
+}
+
+function PaginatedRows({
+  items,
+  resetKey,
+}: {
+  items: [string, { count: number; usd: number }][];
+  resetKey: string;
+}) {
+  const PAGE_SIZE = 10;
+  const [page, setPage] = useState(0);
+  useEffect(() => {
+    setPage(0);
+  }, [resetKey]);
+  const start = page * PAGE_SIZE;
+  const pageItems = items.slice(start, start + PAGE_SIZE);
+  return (
+    <>
+      <CpRows items={pageItems} />
+      <Pagination
+        page={page}
+        pageSize={PAGE_SIZE}
+        total={items.length}
+        onChange={setPage}
+      />
+    </>
   );
 }
 

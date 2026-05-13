@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Pagination } from "./pagination";
 import type { Transfer } from "@/lib/types";
 
 type Props = {
   items: Transfer[];
-  limit?: number;
+  pageSize?: number;
 };
 
 type Filter = "all" | "in" | "out";
@@ -27,13 +28,21 @@ function shortAddr(a: string): string {
   return `${a.slice(0, 6)}…${a.slice(-4)}`;
 }
 
-export function ActivityList({ items, limit = 8 }: Props) {
+export function ActivityList({ items, pageSize = 10 }: Props) {
   const [filter, setFilter] = useState<Filter>("all");
+  const [page, setPage] = useState(0);
   const filtered = useMemo(() => {
     if (filter === "all") return items;
     return items.filter((r) => r.direction === filter);
   }, [items, filter]);
-  const rows = filtered.slice(0, limit);
+
+  // 필터 바뀌면 첫 페이지로
+  useEffect(() => {
+    setPage(0);
+  }, [filter]);
+
+  const start = page * pageSize;
+  const rows = filtered.slice(start, start + pageSize);
 
   const tabs: { value: Filter; label: string }[] = [
     { value: "all", label: "전체" },
@@ -190,6 +199,12 @@ export function ActivityList({ items, limit = 8 }: Props) {
           );
         })}
       </div>
+      <Pagination
+        page={page}
+        pageSize={pageSize}
+        total={filtered.length}
+        onChange={setPage}
+      />
     </div>
   );
 }

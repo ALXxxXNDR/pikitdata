@@ -17,14 +17,8 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   const force = new URL(req.url).searchParams.get("force") === "1";
-  const results = await runAlertCheck(force);
-  return NextResponse.json({
-    ok: true,
-    checked: results.length,
-    triggered: results.filter((r) => r.triggered).length,
-    sent: results.filter((r) => r.sent).length,
-    results,
-  });
+  const result = await runAlertCheck(force);
+  return NextResponse.json(result);
 }
 
 // Vercel Cron 은 POST 도 호출 가능

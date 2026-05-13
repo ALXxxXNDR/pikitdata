@@ -7,6 +7,7 @@ import { ActivityList } from "@/components/activity-list";
 import { ComingSoon } from "@/components/coming-soon";
 import { LiveTimestamp } from "@/components/live-timestamp";
 import { WalletDetail } from "@/components/wallet-detail";
+import { getAlertConfig, isKvConfigured } from "@/lib/alert-config";
 import { PROJECTS, getProject } from "@/lib/projects";
 import {
   buildBalanceCurve,
@@ -186,10 +187,10 @@ async function ProjectOverview({ projectKey }: { projectKey: string }) {
     }),
   ];
 
-  // 활동 — 최근 12건
+  // 활동 — 최근 200건 (페이지네이션이 클라에서 처리)
   const allRecent = allHistory
     .sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1))
-    .slice(0, 12);
+    .slice(0, 200);
 
   const walletRows = activeWallets.map((w, i) => ({
     wallet: w,
@@ -236,9 +237,10 @@ async function WalletDetailSection({
       </div>
     );
   }
-  const [snapshot, history] = await Promise.all([
+  const [snapshot, history, alertConfig] = await Promise.all([
     getWalletSnapshot(wallet.address).catch(() => null as WalletSnapshot | null),
     getCombinedHistory(wallet.address, 2000).catch(() => [] as Transfer[]),
+    getAlertConfig(project.key, wallet.key),
   ]);
   return (
     <WalletDetail
@@ -246,6 +248,8 @@ async function WalletDetailSection({
       wallet={wallet}
       snapshot={snapshot}
       history={history}
+      alertConfig={alertConfig}
+      kvConfigured={isKvConfigured()}
     />
   );
 }
