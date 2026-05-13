@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ActivityList } from "./activity-list";
-import { AlertConfigCard } from "./alert-config-card";
+import { AlertConfigButton } from "./alert-config-button";
 import { Pagination } from "./pagination";
 import type { AlertConfig } from "@/lib/alert-config";
 import type {
@@ -44,7 +44,7 @@ export function WalletDetail({
 
   return (
     <>
-      <div className="mt-3 flex items-center gap-3">
+      <div className="mt-3 flex items-center gap-3 flex-wrap">
         <Link
           href={`/?project=${project.key}`}
           className="inline-flex items-center gap-1.5 text-[13px] px-3 py-1.5 rounded-full border border-ink-12 hover:bg-ink-06"
@@ -52,11 +52,18 @@ export function WalletDetail({
           ← 프로젝트
         </Link>
         <div
-          className="text-[13px] ink-60"
+          className="text-[13px] ink-60 flex-1 min-w-0 truncate"
           style={{ fontFamily: "var(--font-mono)" }}
         >
           {wallet.address}
         </div>
+        <AlertConfigButton
+          projectKey={project.key}
+          walletKey={wallet.key}
+          walletName={wallet.name}
+          initial={alertConfig}
+          kvConfigured={kvConfigured}
+        />
       </div>
 
       <h2
@@ -66,16 +73,6 @@ export function WalletDetail({
         {wallet.name}
       </h2>
       <p className="ink-60 text-[14px] mt-1">{wallet.description}</p>
-
-      <div className="mt-6">
-        <AlertConfigCard
-          projectKey={project.key}
-          walletKey={wallet.key}
-          walletName={wallet.name}
-          initial={alertConfig}
-          kvConfigured={kvConfigured}
-        />
-      </div>
 
       <section
         className="grid gap-6 mt-6"
