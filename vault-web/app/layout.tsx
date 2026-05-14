@@ -21,9 +21,26 @@ const instrumentSerif = Instrument_Serif({
   fallback: ["serif"],
 });
 
+const BASE_URL = "https://dashboard.despell.io";
+
 export const metadata: Metadata = {
+  metadataBase: new URL(BASE_URL),
   title: "DeSpell Vault — 프로젝트 대시보드",
   description: "DeSpell 프로젝트별 운영 지갑 모니터링 (PIKIT · Press A · Pnyx)",
+  openGraph: {
+    title: "DeSpell Vault",
+    description: "Soneium 운영 지갑 모니터링 — PIKIT · Press A · Pnyx",
+    url: BASE_URL,
+    siteName: "DeSpell Vault",
+    locale: "ko_KR",
+    type: "website",
+    // opengraph-image.tsx 가 자동으로 images 에 등록되므로 명시 불필요
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "DeSpell Vault",
+    description: "Soneium 운영 지갑 모니터링 — PIKIT · Press A · Pnyx",
+  },
 };
 
 export default function RootLayout({
