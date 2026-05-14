@@ -21,6 +21,10 @@ const CSP = [
 const nextConfig = {
   reactStrictMode: true,
   outputFileTracingRoot: __dirname,
+  // OG 이미지 생성 시 폰트 파일을 deployment 에 명시적 include.
+  outputFileTracingIncludes: {
+    "/opengraph-image": ["./app/_assets/**/*"],
+  },
   async headers() {
     return [
       {

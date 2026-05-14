@@ -1,49 +1,29 @@
 import { ImageResponse } from "next/og";
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 
 // Next.js 가 자동 인식 — /opengraph-image 라우트 + layout 메타에 자동 연결.
-export const runtime = "edge";
+// nodejs runtime — edge 의 1MB 함수 한도(Hobby) 회피. 폰트 사이즈 ~4MB.
+// dynamic — 빌드 prerender 단계 회피 (run-time 에 매 요청마다 생성, 캐시 적용).
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 export const alt = "DeSpell Vault — Soneium 운영 지갑 모니터링";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
-// Google Fonts API 에서 필요한 글자만 subset fetch.
-// 옛 UA 를 보내야 woff2 대신 ttf 응답 — ImageResponse 는 ttf/otf 만 지원.
-async function loadGoogleFont(
-  family: string,
-  weight: number,
-  text: string,
-): Promise<ArrayBuffer> {
-  const url = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(
-    family,
-  )}:wght@${weight}&text=${encodeURIComponent(text)}`;
-  const css = await fetch(url, {
-    headers: {
-      // IE6 UA → ttf 응답
-      "user-agent":
-        "Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1; SV1)",
-    },
-  }).then((r) => r.text());
-  const match = css.match(
-    /src:\s*url\(([^)]+)\)\s*format\('truetype'\)/,
-  );
-  if (!match) throw new Error(`Font URL not found for ${family}`);
-  const fontRes = await fetch(match[1]);
-  if (!fontRes.ok) throw new Error(`Font fetch failed: ${family}`);
-  return fontRes.arrayBuffer();
-}
-
-const ORIGIN = "https://dashboard.despell.io";
+// 폰트 파일은 next.config.mjs 의 outputFileTracingIncludes 로 deployment 에 포함됨.
 
 export default async function OgImage() {
-  // 카드에 등장하는 모든 글자 (한글 + 영문 + 기호) — Noto Sans KR 로 subset
-  const sansText =
-    "DeSpellVaultSoneium운영지갑모니터링PIKITPressAPnyxdashboard.despell.ioL2·•";
-  // 영문 큰 제목 — Instrument Serif
-  const serifText = "DeSpell Vault";
-
+  // path resolve 는 함수 내부에서 — turbopack 빌드 시 top-level evaluate 회피.
+  const serifFontPath = fileURLToPath(
+    new URL("./_assets/InstrumentSerif-Regular.ttf", import.meta.url),
+  );
+  const sansFontPath = fileURLToPath(
+    new URL("./_assets/PretendardJP-Medium.otf", import.meta.url),
+  );
   const [serifFont, sansFont] = await Promise.all([
-    loadGoogleFont("Instrument Serif", 400, serifText),
-    loadGoogleFont("Noto Sans KR", 500, sansText),
+    readFile(serifFontPath),
+    readFile(sansFontPath),
   ]);
 
   return new ImageResponse(
@@ -57,10 +37,10 @@ export default async function OgImage() {
           padding: 80,
           display: "flex",
           flexDirection: "column",
-          fontFamily: "NotoSansKR",
+          fontFamily: "Pretendard",
         }}
       >
-        {/* 상단: 로고 + 우상단 L2 표시 */}
+        {/* 상단: 로고 (inline 박스) + 우상단 L2 */}
         <div
           style={{
             display: "flex",
@@ -75,20 +55,17 @@ export default async function OgImage() {
                 width: 44,
                 height: 44,
                 background: "#0E0E0C",
+                color: "#F4F3EE",
                 borderRadius: 10,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                overflow: "hidden",
+                fontSize: 22,
+                fontWeight: 600,
+                letterSpacing: "-0.02em",
               }}
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={`${ORIGIN}/logos/despell.png`}
-                width={30}
-                height={30}
-                alt=""
-              />
+              D
             </div>
             <span
               style={{
@@ -204,7 +181,7 @@ export default async function OgImage() {
           style: "normal",
         },
         {
-          name: "NotoSansKR",
+          name: "Pretendard",
           data: sansFont,
           weight: 500,
           style: "normal",
