@@ -100,7 +100,7 @@ function MainContent({
     if (!wallet || !wallet.address) {
       return (
         <div className="bg-white border border-ink-12 rounded-[18px] p-8 mt-3 ink-60">
-          지갑 정보를 찾을 수 없습니다.
+          컨트랙트 정보를 찾을 수 없습니다.
         </div>
       );
     }
@@ -138,7 +138,7 @@ function ProjectMeta({
   return (
     <div className="flex gap-8 items-end ink-60 text-[13px]">
       <div>
-        지갑 수
+        컨트랙트 수
         <b
           className="block text-[15px] font-medium mt-0.5"
           style={{ color: "var(--color-ink)", fontFamily: "var(--font-mono)" }}
@@ -169,7 +169,7 @@ function ProjectMeta({
 }
 
 // ─────────────────────────────────────────────────────────────────
-// 프로젝트 개요 (Hero + 분포 + 지갑 + 자산 + 활동)
+// 프로젝트 개요 (Hero + 분포 + 컨트랙트 + 자산 + 활동)
 // ─────────────────────────────────────────────────────────────────
 
 async function ProjectOverview({ projectKey }: { projectKey: string }) {
@@ -217,7 +217,7 @@ async function ProjectOverview({ projectKey }: { projectKey: string }) {
   const allHistory = histories.flat();
   const balanceCurve = buildBalanceCurve(totalUsd, allHistory);
 
-  // contract 셀렉터 옵션 — 전체 + 각 활성 지갑
+  // contract 셀렉터 옵션 — 전체 + 각 활성 컨트랙트
   const walletOptions: WalletOption[] = [
     { key: "_all", name: "전체 (Total)", totalUsd, curve: balanceCurve },
     ...activeWallets.map((w, i) => {
@@ -279,7 +279,7 @@ function WalletDetailSection({
   if (!wallet || !wallet.address) {
     return (
       <div className="bg-white border border-ink-12 rounded-[18px] p-8 mt-3 ink-60">
-        지갑 정보를 찾을 수 없습니다.
+        컨트랙트 정보를 찾을 수 없습니다.
       </div>
     );
   }

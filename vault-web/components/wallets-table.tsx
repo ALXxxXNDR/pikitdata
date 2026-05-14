@@ -66,7 +66,7 @@ export function WalletsTable({ projectKey, rows }: Props) {
           {rows.length === 0 && (
             <tr>
               <td colSpan={4} className="py-8 text-center ink-45 text-[13px]">
-                등록된 지갑이 없습니다
+                등록된 컨트랙트가 없습니다
               </td>
             </tr>
           )}

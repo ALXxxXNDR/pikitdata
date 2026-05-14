@@ -113,7 +113,7 @@ async function sendEmail(
       );
       return { ok: false, error: "RESEND_API_KEY 미설정 (production)" };
     }
-    // dev: 본문은 로깅하지 않음 (지갑 잔고 leak 방지) — 제목만.
+    // dev: 본문은 로깅하지 않음 (컨트랙트 잔고 leak 방지) — 제목만.
     console.log(`[ALERT][dev] would send: ${subject}`);
     void body;
     return { ok: false, error: "RESEND_API_KEY 미설정 (dev — 제목만 stdout)" };
@@ -147,7 +147,7 @@ export async function runAlertCheck(force = false): Promise<AlertResult> {
   const wallets = activeWallets();
   const now = Date.now();
 
-  // 지갑별 체크 병렬화 — 순차였을 때 4 지갑 × ~2s = ~8s, 병렬은 ~2s.
+  // 컨트랙트별 체크 병렬화 — 순차였을 때 4 × ~2s = ~8s, 병렬은 ~2s.
   // 부수효과 없는 read-only 호출이라 race 우려 없음 (codex-rescue#4).
   const rows: AlertRow[] = await Promise.all(
     wallets.map(async ({ project, wallet }): Promise<AlertRow> => {

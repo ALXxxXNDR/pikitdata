@@ -11,9 +11,9 @@ export const PROJECTS: ProjectConfig[] = [
     wallets: [
       {
         key: "revenue",
-        name: "운영 수익 지갑",
+        name: "운영 수익 컨트랙트",
         address: "0x79fc40D88496b6b92EB789d28974dd6C162e8D6E",
-        description: "PIKIT 운영 수익이 모이는 지갑",
+        description: "PIKIT 운영 수익이 모이는 컨트랙트",
         kind: "revenue",
         pnlMode: "income",
         alertThresholdUsd: null,
@@ -39,9 +39,9 @@ export const PROJECTS: ProjectConfig[] = [
     wallets: [
       {
         key: "revenue",
-        name: "운영 수익 지갑",
+        name: "운영 수익 컨트랙트",
         address: "0x596e30E49158B5447D62211B54852ff86793cc57",
-        description: "Press A 운영 수익이 모이는 지갑",
+        description: "Press A 운영 수익이 모이는 컨트랙트",
         kind: "revenue",
         pnlMode: "income",
         alertThresholdUsd: null,

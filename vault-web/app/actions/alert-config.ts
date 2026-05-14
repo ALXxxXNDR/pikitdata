@@ -27,7 +27,7 @@ export async function saveAlertConfigAction(
   }
 
   if (!projectKey || !walletKey) {
-    return { ok: false, error: "프로젝트/지갑 키 누락" };
+    return { ok: false, error: "프로젝트/컨트랙트 키 누락" };
   }
   // 임의 키로 Edge Config 오염 방지 — 실재하는 project/wallet 만 허용.
   const proj = PROJECTS.find((p) => p.key === projectKey);
@@ -35,7 +35,7 @@ export async function saveAlertConfigAction(
     return { ok: false, error: "알 수 없는 프로젝트" };
   }
   if (!proj.wallets.some((w) => w.key === walletKey)) {
-    return { ok: false, error: "알 수 없는 지갑" };
+    return { ok: false, error: "알 수 없는 컨트랙트" };
   }
   if (!Number.isFinite(threshold) || threshold < 0) {
     return { ok: false, error: "유효한 임계 금액이 아닙니다" };
