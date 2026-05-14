@@ -4,6 +4,9 @@
 # Claude Code local config
 .claude/
 
+# Security audit reports (local-only)
+.gstack/
+
 # Environment overrides (vault-web has its own .gitignore for app-local env files)
 .env
 .env.*

@@ -5,18 +5,22 @@ export const dynamic = "force-dynamic";
 
 function authorized(req: Request): boolean {
   const secret = (process.env.CRON_SECRET ?? "").trim();
-  if (!secret) return true; // 시크릿 미설정 시 누구나 호출 가능 (개발용)
+  if (!secret) {
+    console.error("[/api/alert] CRON_SECRET not set — refusing request");
+    return false;
+  }
   const auth = req.headers.get("authorization") ?? "";
-  if (auth === `Bearer ${secret}`) return true;
-  const qSecret = new URL(req.url).searchParams.get("secret");
-  return qSecret === secret;
+  return auth === `Bearer ${secret}`;
 }
 
 export async function GET(req: Request) {
   if (!authorized(req)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  const force = new URL(req.url).searchParams.get("force") === "1";
+  // force 는 prod 비활성 — 로컬 디버깅 전용. 쿨다운 우회로 이메일 폭탄 방지.
+  const force =
+    process.env.NODE_ENV !== "production" &&
+    new URL(req.url).searchParams.get("force") === "1";
   const result = await runAlertCheck(force);
   return NextResponse.json(result);
 }

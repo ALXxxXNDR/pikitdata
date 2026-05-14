@@ -6,6 +6,7 @@ import {
   type AlertDirection,
   setAlertConfig,
 } from "@/lib/alert-config";
+import { PROJECTS } from "@/lib/projects";
 
 export type SaveAlertResult = {
   ok: boolean;
@@ -27,6 +28,14 @@ export async function saveAlertConfigAction(
 
   if (!projectKey || !walletKey) {
     return { ok: false, error: "프로젝트/지갑 키 누락" };
+  }
+  // 임의 키로 Edge Config 오염 방지 — 실재하는 project/wallet 만 허용.
+  const proj = PROJECTS.find((p) => p.key === projectKey);
+  if (!proj) {
+    return { ok: false, error: "알 수 없는 프로젝트" };
+  }
+  if (!proj.wallets.some((w) => w.key === walletKey)) {
+    return { ok: false, error: "알 수 없는 지갑" };
   }
   if (!Number.isFinite(threshold) || threshold < 0) {
     return { ok: false, error: "유효한 임계 금액이 아닙니다" };
@@ -60,6 +69,11 @@ export async function saveAlertConfigAction(
           "쓰기 권한이 설정되지 않았습니다. VERCEL_API_TOKEN env 를 추가하세요.",
       };
     }
-    return { ok: false, error: msg };
+    if (msg === "EDGE_PATCH_FAILED") {
+      return { ok: false, error: "저장 실패 — 잠시 후 다시 시도하세요" };
+    }
+    // 알 수 없는 에러는 내부 상세 노출 방지.
+    console.error("[saveAlertConfigAction] unknown error", e);
+    return { ok: false, error: "저장 실패" };
   }
 }

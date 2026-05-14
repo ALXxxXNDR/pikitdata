@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ActivityList } from "./activity-list";
 import { AlertConfigButton } from "./alert-config-button";
 import { Pagination } from "./pagination";
+import { isEvmAddress } from "@/lib/format";
 import type { AlertConfig } from "@/lib/alert-config";
 import type {
   ProjectConfig,
@@ -309,16 +310,25 @@ function CpRows({
           className="grid items-center gap-3 py-2.5 border-b border-ink-06 last:border-b-0"
           style={{ gridTemplateColumns: "1fr auto auto" }}
         >
-          <a
-            href={`https://soneium.blockscout.com/address/${addr}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[12px] ink hover:text-[var(--color-accent)] hover:underline underline-offset-2 break-all"
-            style={{ fontFamily: "var(--font-mono)" }}
-            title="Blockscout 에서 열기"
-          >
-            {addr}
-          </a>
+          {isEvmAddress(addr) ? (
+            <a
+              href={`https://soneium.blockscout.com/address/${addr}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[12px] ink hover:text-[var(--color-accent)] hover:underline underline-offset-2 break-all"
+              style={{ fontFamily: "var(--font-mono)" }}
+              title="Blockscout 에서 열기"
+            >
+              {addr}
+            </a>
+          ) : (
+            <span
+              className="text-[12px] ink-60 break-all"
+              style={{ fontFamily: "var(--font-mono)" }}
+            >
+              {addr}
+            </span>
+          )}
           <div
             className="ink-45 text-[12px]"
             style={{ fontFamily: "var(--font-mono)" }}

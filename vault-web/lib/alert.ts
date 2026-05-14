@@ -107,8 +107,16 @@ async function sendEmail(
   body: string,
 ): Promise<{ ok: boolean; error?: string }> {
   if (!RESEND_API_KEY) {
-    console.log(`[ALERT][stdout] ${subject}\n${body}`);
-    return { ok: false, error: "RESEND_API_KEY 미설정 (stdout 로그만)" };
+    if (process.env.NODE_ENV === "production") {
+      console.error(
+        "[ALERT] RESEND_API_KEY missing in production — alert dropped",
+      );
+      return { ok: false, error: "RESEND_API_KEY 미설정 (production)" };
+    }
+    // dev: 본문은 로깅하지 않음 (지갑 잔고 leak 방지) — 제목만.
+    console.log(`[ALERT][dev] would send: ${subject}`);
+    void body;
+    return { ok: false, error: "RESEND_API_KEY 미설정 (dev — 제목만 stdout)" };
   }
   try {
     const r = await fetch("https://api.resend.com/emails", {

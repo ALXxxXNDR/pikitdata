@@ -20,7 +20,12 @@ export default async function LoginPage({
   const errorMsg = errorKey
     ? (ERROR_MESSAGES[errorKey] ?? ERROR_MESSAGES.default)
     : null;
-  const callbackUrl = sp.callbackUrl ?? "/";
+  // 외부 redirect 방지 — relative 경로만, "//" (protocol-relative) 차단.
+  const rawCallback = sp.callbackUrl ?? "/";
+  const callbackUrl =
+    rawCallback.startsWith("/") && !rawCallback.startsWith("//")
+      ? rawCallback
+      : "/";
 
   return (
     <div className="min-h-screen grid place-items-center px-6">

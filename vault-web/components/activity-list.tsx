@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Pagination } from "./pagination";
+import { isTxHash } from "@/lib/format";
 import type { Transfer } from "@/lib/types";
 
 type Props = {
@@ -92,7 +93,8 @@ export function ActivityList({ items, pageSize = 10 }: Props) {
         )}
         {rows.map((r, i) => {
           const isIn = r.direction === "in";
-          const txUrl = r.hash
+          // 업스트림 (Blockscout) 가 잘못된 hash 를 돌려줘도 javascript: URL 등 주입 차단.
+          const txUrl = isTxHash(r.hash)
             ? `https://soneium.blockscout.com/tx/${r.hash}`
             : null;
           return (

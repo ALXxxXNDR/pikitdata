@@ -182,7 +182,8 @@ async function edgePatch(items: EdgeItem[]): Promise<void> {
   });
   if (!r.ok) {
     const t = await r.text();
-    throw new Error(`VERCEL_API_${r.status}: ${t}`);
+    console.error(`[edgePatch] Vercel API ${r.status}`, t);
+    throw new Error("EDGE_PATCH_FAILED");
   }
 }
 
