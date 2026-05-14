@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ProjectConfig } from "@/lib/types";
@@ -66,6 +66,7 @@ type Props = {
 
 export function ProjectSwitcher({ projects, currentKey }: Props) {
   const [open, setOpen] = useState(false);
+  const [isPending, startTransition] = useTransition();
   const router = useRouter();
   const sp = useSearchParams();
   const ref = useRef<HTMLDivElement>(null);
@@ -81,42 +82,80 @@ export function ProjectSwitcher({ projects, currentKey }: Props) {
   }, []);
 
   function select(key: string) {
+    if (key === currentKey || isPending) return;
     const params = new URLSearchParams(sp.toString());
     params.set("project", key);
     params.delete("wallet");
-    router.push(`/?${params.toString()}`);
     setOpen(false);
+    // useTransition — server component fetch 완료까지 isPending=true
+    startTransition(() => {
+      router.push(`/?${params.toString()}`);
+    });
   }
 
   return (
-    <div className="relative" ref={ref}>
-      <button
-        type="button"
-        className="flex items-center gap-3.5 bg-transparent p-0 text-left cursor-pointer"
-        onClick={(e) => {
-          e.stopPropagation();
-          setOpen((v) => !v);
-        }}
-      >
-        <Swatch project={current} size={36} />
-        <span
-          className="text-[44px] leading-none font-semibold"
-          style={{ letterSpacing: "-0.025em" }}
+    <>
+      {isPending && (
+        <div
+          className="fixed inset-x-0 top-0 h-[2px] z-[100] overflow-hidden pointer-events-none"
+          style={{
+            background:
+              "color-mix(in srgb, var(--color-accent) 10%, transparent)",
+          }}
+          role="progressbar"
+          aria-label="페이지 로딩 중"
+          aria-busy="true"
         >
-          {current.name}
-        </span>
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          className={`w-[18px] h-[18px] ink-45 transition-transform ${
-            open ? "rotate-180" : ""
-          }`}
+          <div className="progress-slide-bar" />
+        </div>
+      )}
+
+      <div className="relative" ref={ref}>
+        <button
+          type="button"
+          className="flex items-center gap-3.5 bg-transparent p-0 text-left cursor-pointer"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (isPending) return;
+            setOpen((v) => !v);
+          }}
+          aria-busy={isPending}
+          disabled={isPending}
         >
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
-      </button>
+          <Swatch project={current} size={36} />
+          <span
+            className="text-[44px] leading-none font-semibold"
+            style={{ letterSpacing: "-0.025em" }}
+          >
+            {current.name}
+          </span>
+          {isPending ? (
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="var(--color-accent)"
+              strokeWidth="2.4"
+              strokeLinecap="round"
+              className="w-[18px] h-[18px] spin-icon"
+              aria-hidden="true"
+            >
+              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+            </svg>
+          ) : (
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              className={`w-[18px] h-[18px] ink-45 transition-transform ${
+                open ? "rotate-180" : ""
+              }`}
+              aria-hidden="true"
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          )}
+        </button>
 
       {open && (
         <div
@@ -154,6 +193,7 @@ export function ProjectSwitcher({ projects, currentKey }: Props) {
           ))}
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 }

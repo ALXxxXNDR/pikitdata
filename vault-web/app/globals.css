@@ -65,3 +65,21 @@ button { transition: background-color 0.15s ease, border-color 0.15s ease, color
 .spin-icon {
   animation: spin 0.9s linear infinite;
 }
+
+/* 페이지 전환 진행 바 — 상단 슬라이드 (NProgress 스타일) */
+@keyframes progress-slide {
+  0%   { transform: translateX(-100%) scaleX(0.35); }
+  50%  { transform: translateX(20%)   scaleX(0.7);  }
+  100% { transform: translateX(260%)  scaleX(0.35); }
+}
+.progress-slide-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 40%;
+  background: var(--color-accent);
+  transform-origin: left center;
+  animation: progress-slide 1.3s ease-in-out infinite;
+  box-shadow: 0 0 10px color-mix(in srgb, var(--color-accent) 55%, transparent);
+}
