@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 // dynamic — 빌드 prerender 단계 회피 (run-time 에 매 요청마다 생성, 캐시 적용).
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const alt = "DeSpell Vault — Soneium 운영 지갑 모니터링";
+export const alt = "DeSpell Vault · DeSpell 컨트랙트 모니터링";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -127,7 +127,7 @@ export default async function OgImage() {
               display: "flex",
             }}
           >
-            Soneium 운영 지갑 모니터링
+            DeSpell 컨트랙트 모니터링
           </div>
           <div
             style={{

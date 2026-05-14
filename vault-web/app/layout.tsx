@@ -26,10 +26,11 @@ const BASE_URL = "https://dashboard.despell.io";
 export const metadata: Metadata = {
   metadataBase: new URL(BASE_URL),
   title: "DeSpell Vault — 프로젝트 대시보드",
-  description: "DeSpell 프로젝트별 운영 지갑 모니터링 (PIKIT · Press A · Pnyx)",
+  description: `DeSpell 컨트랙트 모니터링
+PIKIT · Press A · Pnyx`,
   openGraph: {
     title: "DeSpell Vault",
-    description: "Soneium 운영 지갑 모니터링 — PIKIT · Press A · Pnyx",
+    description: "DeSpell 컨트랙트 모니터링\nPIKIT · Press A · Pnyx",
     url: BASE_URL,
     siteName: "DeSpell Vault",
     locale: "ko_KR",
@@ -39,7 +40,7 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "DeSpell Vault",
-    description: "Soneium 운영 지갑 모니터링 — PIKIT · Press A · Pnyx",
+    description: "DeSpell 컨트랙트 모니터링\nPIKIT · Press A · Pnyx",
   },
 };
 
