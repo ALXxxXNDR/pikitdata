@@ -202,8 +202,13 @@ export async function runAlertCheck(force = false): Promise<AlertResult> {
   const body = buildBody(rows, baseUrl);
   const sendResult = await sendEmail(subject, body);
 
-  // 상태 업데이트 — 메일 발송 성공 시 (또는 SMTP 미설정 stdout 으로도 성공으로 간주)
-  const succeeded = sendResult.ok || !RESEND_API_KEY;
+  // 상태 업데이트 — 메일 실제 발송 성공만 cooldown 기록.
+  //   - dev 에서 RESEND_API_KEY 미설정: stdout 로깅이 "발송"으로 간주 (의도된 dev 동작)
+  //   - prod 에서 RESEND_API_KEY 미설정: drop. cooldown 안 찍어야 다음 cron 이 재시도함
+  //     (안 그러면 RESEND 복구 후에도 20h 동안 알림 안 옴 — codex-rescue#1)
+  const succeeded =
+    sendResult.ok ||
+    (!RESEND_API_KEY && process.env.NODE_ENV !== "production");
   if (succeeded) {
     for (const r of triggeredRows) {
       await setAlertState(r.projectKey, r.walletKey, {
