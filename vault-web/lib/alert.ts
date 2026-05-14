@@ -145,43 +145,46 @@ async function sendEmail(
 
 export async function runAlertCheck(force = false): Promise<AlertResult> {
   const wallets = activeWallets();
-  const rows: AlertRow[] = [];
   const now = Date.now();
 
-  for (const { project, wallet } of wallets) {
-    const config = await getAlertConfig(project.key, wallet.key);
-    let currentUsd = 0;
-    let err: string | undefined;
-    try {
-      const snap = await getWalletSnapshot(wallet.address);
-      currentUsd = snap.totalUsd;
-    } catch (e) {
-      err = String(e);
-    }
-    const meetsCond = err == null && evaluate(config, currentUsd);
+  // 지갑별 체크 병렬화 — 순차였을 때 4 지갑 × ~2s = ~8s, 병렬은 ~2s.
+  // 부수효과 없는 read-only 호출이라 race 우려 없음 (codex-rescue#4).
+  const rows: AlertRow[] = await Promise.all(
+    wallets.map(async ({ project, wallet }): Promise<AlertRow> => {
+      const [config, snapResult] = await Promise.all([
+        getAlertConfig(project.key, wallet.key),
+        getWalletSnapshot(wallet.address).then(
+          (s) => ({ ok: true as const, currentUsd: s.totalUsd }),
+          (e: unknown) => ({ ok: false as const, err: String(e) }),
+        ),
+      ]);
+      const currentUsd = snapResult.ok ? snapResult.currentUsd : 0;
+      const err = snapResult.ok ? undefined : snapResult.err;
+      const meetsCond = err == null && evaluate(config, currentUsd);
 
-    // cooldown check (KV 에 저장된 last 알림 시각 기준)
-    let inCooldown = false;
-    if (meetsCond && !force) {
-      const state = await getAlertState(project.key, wallet.key);
-      if (state && now - state.lastAlertTs < COOLDOWN_MS) {
-        inCooldown = true;
+      // cooldown check (KV 에 저장된 last 알림 시각 기준)
+      let inCooldown = false;
+      if (meetsCond && !force) {
+        const state = await getAlertState(project.key, wallet.key);
+        if (state && now - state.lastAlertTs < COOLDOWN_MS) {
+          inCooldown = true;
+        }
       }
-    }
 
-    rows.push({
-      projectKey: project.key,
-      walletKey: wallet.key,
-      projectName: project.name,
-      walletName: wallet.name,
-      address: wallet.address,
-      config,
-      currentUsd,
-      triggered: meetsCond && !inCooldown,
-      inCooldown,
-      error: err,
-    });
-  }
+      return {
+        projectKey: project.key,
+        walletKey: wallet.key,
+        projectName: project.name,
+        walletName: wallet.name,
+        address: wallet.address,
+        config,
+        currentUsd,
+        triggered: meetsCond && !inCooldown,
+        inCooldown,
+        error: err,
+      };
+    }),
+  );
 
   const triggeredRows = rows.filter((r) => r.triggered);
   const enabledCount = rows.filter((r) => r.config.enabled).length;
