@@ -82,20 +82,65 @@ async function getEthBalanceWei(address: string): Promise<bigint> {
 // Blockscout REST
 // ─────────────────────────────────────────────────────────────────
 
-async function bsGet(path: string, params?: Record<string, string>): Promise<any> {
+type BlockscoutPaginated<T> = {
+  items?: T[];
+  next_page_params?: Record<string, string | number | null> | null;
+};
+
+type BsToken = {
+  symbol?: string;
+  name?: string;
+  decimals?: string | number;
+  address_hash?: string;
+  exchange_rate?: string | number | null;
+};
+
+type BsTokenHolding = {
+  token?: BsToken;
+  value?: string | number;
+};
+
+type BsAddressRef = { hash?: string };
+
+type BsNativeTx = {
+  hash?: string;
+  timestamp?: string;
+  from?: BsAddressRef;
+  to?: BsAddressRef;
+  value?: string | number;
+};
+
+type BsTokenTransfer = {
+  transaction_hash?: string;
+  tx_hash?: string;
+  timestamp?: string;
+  from?: BsAddressRef;
+  to?: BsAddressRef;
+  total?: { value?: string | number };
+  token?: BsToken;
+};
+
+async function bsGet<T>(
+  path: string,
+  params?: Record<string, string>,
+): Promise<BlockscoutPaginated<T>> {
   const qs = params ? "?" + new URLSearchParams(params).toString() : "";
   const url = `${BLOCKSCOUT_BASE}${path}${qs}`;
   const r = await fetch(url, { next: { revalidate: 30 } });
   if (!r.ok) throw new Error(`Blockscout ${path} HTTP ${r.status}`);
-  return r.json();
+  return (await r.json()) as BlockscoutPaginated<T>;
 }
 
-async function bsGetPaginated(path: string, maxItems = 2000, maxPages = 50): Promise<any[]> {
-  const items: any[] = [];
+async function bsGetPaginated<T>(
+  path: string,
+  maxItems = 2000,
+  maxPages = 50,
+): Promise<T[]> {
+  const items: T[] = [];
   let params: Record<string, string> | undefined;
   for (let i = 0; i < maxPages; i++) {
-    const data: any = await bsGet(path, params);
-    const page: any[] = data.items ?? [];
+    const data = await bsGet<T>(path, params);
+    const page = data.items ?? [];
     items.push(...page);
     if (items.length >= maxItems) return items.slice(0, maxItems);
     const next = data.next_page_params;
@@ -135,25 +180,28 @@ async function getEthUsd(): Promise<number> {
 // ─────────────────────────────────────────────────────────────────
 
 export async function getTokenHoldings(address: string): Promise<TokenHolding[]> {
-  const data: any = await bsGet(`/addresses/${address}/tokens`, { type: "ERC-20" });
-  const items: any[] = data.items ?? [];
+  const data = await bsGet<BsTokenHolding>(`/addresses/${address}/tokens`, {
+    type: "ERC-20",
+  });
+  const items = data.items ?? [];
   return items.map((it) => {
     const tok = it.token ?? {};
     const decimals = Number(tok.decimals ?? 18) || 18;
     const raw = BigInt(it.value ?? 0);
     const divisor = 10 ** decimals;
     const value = Number(raw) / divisor;
-    const rateStr = tok.exchange_rate;
-    const rate = rateStr ? Number(rateStr) : null;
-    const symbol: string = tok.symbol ?? "?";
+    const rateRaw = tok.exchange_rate;
+    const rateNum = rateRaw != null ? Number(rateRaw) : NaN;
+    const rate = Number.isFinite(rateNum) ? rateNum : null;
+    const symbol = tok.symbol ?? "?";
     return {
       symbol,
       name: tok.name ?? "",
       decimals,
       contract: tok.address_hash ?? "",
       value,
-      exchangeRate: Number.isFinite(rate as number) ? (rate as number) : null,
-      usd: tokenToUsd(value, Number.isFinite(rate as number) ? (rate as number) : null, symbol),
+      exchangeRate: rate,
+      usd: tokenToUsd(value, rate, symbol),
     };
   });
 }
@@ -184,11 +232,14 @@ export async function getCombinedHistory(address: string, limit = 2000): Promise
 
   // native txs (ETH transfers)
   try {
-    const txs = await bsGetPaginated(`/addresses/${address}/transactions`, limit);
+    const txs = await bsGetPaginated<BsNativeTx>(
+      `/addresses/${address}/transactions`,
+      limit,
+    );
     for (const tx of txs) {
-      const ts: string = tx.timestamp ?? "";
-      const fr: string = (tx.from?.hash ?? "").toLowerCase();
-      const to: string = (tx.to?.hash ?? "").toLowerCase();
+      const ts = tx.timestamp ?? "";
+      const fr = (tx.from?.hash ?? "").toLowerCase();
+      const to = (tx.to?.hash ?? "").toLowerCase();
       const valWei = BigInt(tx.value ?? 0);
       const valEth = Number(valWei) / 1e18;
       if (valEth === 0) continue;
@@ -210,21 +261,25 @@ export async function getCombinedHistory(address: string, limit = 2000): Promise
 
   // ERC20 transfers
   try {
-    const tts = await bsGetPaginated(`/addresses/${address}/token-transfers`, limit);
+    const tts = await bsGetPaginated<BsTokenTransfer>(
+      `/addresses/${address}/token-transfers`,
+      limit,
+    );
     for (const tt of tts) {
-      const ts: string = tt.timestamp ?? "";
-      const fr: string = (tt.from?.hash ?? "").toLowerCase();
-      const to: string = (tt.to?.hash ?? "").toLowerCase();
+      const ts = tt.timestamp ?? "";
+      const fr = (tt.from?.hash ?? "").toLowerCase();
+      const to = (tt.to?.hash ?? "").toLowerCase();
       const tok = tt.token ?? {};
       const decimals = Number(tok.decimals ?? 18) || 18;
       const raw = BigInt(tt.total?.value ?? 0);
       const val = Number(raw) / 10 ** decimals;
-      const rateStr = tok.exchange_rate;
-      const rate = rateStr ? Number(rateStr) : null;
-      const symbol: string = tok.symbol ?? "?";
+      const rateRaw = tok.exchange_rate;
+      const rateNum = rateRaw != null ? Number(rateRaw) : NaN;
+      const rate = Number.isFinite(rateNum) ? rateNum : null;
+      const symbol = tok.symbol ?? "?";
       const usd =
         rate !== null || isStablecoin(symbol, null)
-          ? tokenToUsd(val, Number.isFinite(rate as number) ? (rate as number) : null, symbol)
+          ? tokenToUsd(val, rate, symbol)
           : null;
       const direction: Direction = fr === to ? "self" : to === addrLo ? "in" : "out";
       out.push({

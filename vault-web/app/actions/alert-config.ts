@@ -46,11 +46,18 @@ export async function saveAlertConfigAction(
     return { ok: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    if (msg === "KV_NOT_CONFIGURED") {
+    if (msg === "EDGE_CONFIG_NOT_SET" || msg === "EDGE_CONFIG_ID_PARSE_FAILED") {
       return {
         ok: false,
         error:
-          "저장소(Upstash Redis)가 아직 연결되지 않았습니다. 관리자에게 Vercel Marketplace KV 활성화를 요청하세요.",
+          "저장소(Vercel Edge Config) 가 아직 연결되지 않았습니다. Vercel 대시보드에서 Edge Config 를 생성하고 EDGE_CONFIG env 를 설정하세요.",
+      };
+    }
+    if (msg === "VERCEL_API_TOKEN_NOT_SET") {
+      return {
+        ok: false,
+        error:
+          "쓰기 권한이 설정되지 않았습니다. VERCEL_API_TOKEN env 를 추가하세요.",
       };
     }
     return { ok: false, error: msg };

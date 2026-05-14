@@ -12,7 +12,7 @@
  * env 미설정 시: lib/projects.ts 의 alertThresholdUsd 정적 fallback.
  */
 
-import { get, getAll, has } from "@vercel/edge-config";
+import { get, has } from "@vercel/edge-config";
 import { PROJECTS } from "./projects";
 
 export type AlertDirection = "above" | "below";
@@ -135,39 +135,6 @@ export async function getAlertConfig(
     return parseConfig(raw) ?? staticFallback(projectKey, walletKey);
   } catch {
     return staticFallback(projectKey, walletKey);
-  }
-}
-
-export async function getAllAlertConfigs(): Promise<
-  Record<string, AlertConfig>
-> {
-  if (!isKvConfigured()) {
-    const out: Record<string, AlertConfig> = {};
-    for (const p of PROJECTS) {
-      if (p.comingSoon) continue;
-      for (const w of p.wallets) {
-        if (!w.address) continue;
-        out[`${p.key}:${w.key}`] = staticFallback(p.key, w.key);
-      }
-    }
-    return out;
-  }
-  try {
-    const all = (await getAll()) as Record<string, unknown>;
-    const out: Record<string, AlertConfig> = {};
-    for (const [k, v] of Object.entries(all)) {
-      if (!k.startsWith(CFG_PREFIX)) continue;
-      const parsed = parseConfig(v);
-      if (parsed) {
-        // 키에 첫 '_' 는 project/wallet 구분자가 아니라 그냥 _. 마지막 '_'
-        // 를 구분자로 쓰는 것보다 projectKey/walletKey 명확히 알기 위해
-        // PROJECTS 와 매칭. 일단 raw key 만 반환 (호출자가 알아서).
-        out[k.slice(CFG_PREFIX.length)] = parsed;
-      }
-    }
-    return out;
-  } catch {
-    return {};
   }
 }
 
