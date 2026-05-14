@@ -55,8 +55,9 @@ async function rpcCall<T = unknown>(method: string, params: unknown[]): Promise<
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
         // 5s 타임아웃 — 느린 RPC 는 다음 URL 로 failover.
         signal: AbortSignal.timeout(5_000),
-        // 서버 컴포넌트의 fetch 는 next 캐시 사용
-        next: { revalidate: 30 },
+        // 서버 컴포넌트의 fetch 는 next 캐시 사용. 60초 — 잔고 즉시성보다
+        // 재방문 속도 우선 (사용자가 매번 클릭해도 1분 안엔 cache hit)
+        next: { revalidate: 60 },
       });
       if (!r.ok) {
         lastErr = new Error(`RPC ${url} HTTP ${r.status}`);
@@ -130,7 +131,7 @@ async function bsGet<T>(
   const url = `${BLOCKSCOUT_BASE}${path}${qs}`;
   const r = await fetch(url, {
     signal: AbortSignal.timeout(10_000),
-    next: { revalidate: 30 },
+    next: { revalidate: 60 },
   });
   if (!r.ok) throw new Error(`Blockscout ${path} HTTP ${r.status}`);
   return (await r.json()) as BlockscoutPaginated<T>;
@@ -161,16 +162,20 @@ async function bsGetPaginated<T>(
   return items;
 }
 
-// ETH/USD 캐시 — CoinGecko 60s
+// ETH/USD 캐시 — CoinGecko 5분. ETH 가격은 1-2% 변동도 잔고 USD 표시에 큰
+// 차이 없음. 외부 API 호출 줄이고 cold-start 부담 감소.
+const ETH_RATE_TTL_MS = 5 * 60_000;
 let ethRateCache: { ts: number; value: number } | null = null;
 
 async function getEthUsd(): Promise<number> {
   const now = Date.now();
-  if (ethRateCache && now - ethRateCache.ts < 60_000) return ethRateCache.value;
+  if (ethRateCache && now - ethRateCache.ts < ETH_RATE_TTL_MS) {
+    return ethRateCache.value;
+  }
   try {
     const r = await fetch(COINGECKO_ETH, {
       signal: AbortSignal.timeout(5_000),
-      next: { revalidate: 60 },
+      next: { revalidate: 300 },
     });
     if (!r.ok) throw new Error("coingecko");
     const data = await r.json();
@@ -234,45 +239,50 @@ export async function getWalletSnapshot(address: string): Promise<WalletSnapshot
   };
 }
 
-export async function getCombinedHistory(address: string, limit = 2000): Promise<Transfer[]> {
+export async function getCombinedHistory(
+  address: string,
+  limit = 500,
+): Promise<Transfer[]> {
   const addrLo = address.toLowerCase();
   const out: Transfer[] = [];
 
-  // native txs (ETH transfers)
-  try {
-    const txs = await bsGetPaginated<BsNativeTx>(
+  // native + ERC20 paginated fetch 를 병렬로 — 기존엔 sequential 라
+  // wall-time 가 둘의 합. 병렬화하면 둘 중 느린 것 기준.
+  const [nativeTxs, tokenTransfers] = await Promise.all([
+    bsGetPaginated<BsNativeTx>(
       `/addresses/${address}/transactions`,
       limit,
-    );
-    for (const tx of txs) {
-      const ts = tx.timestamp ?? "";
-      const fr = (tx.from?.hash ?? "").toLowerCase();
-      const to = (tx.to?.hash ?? "").toLowerCase();
-      const valWei = BigInt(tx.value ?? 0);
-      const valEth = Number(valWei) / 1e18;
-      if (valEth === 0) continue;
-      const direction: Direction = fr === to ? "self" : to === addrLo ? "in" : "out";
-      out.push({
-        hash: tx.hash ?? "",
-        timestamp: ts,
-        direction,
-        counterparty: direction === "in" ? fr : to,
-        symbol: "ETH",
-        value: valEth,
-        usd: null,
-        kind: "native",
-      });
-    }
-  } catch {
-    // ignore
+    ).catch(() => [] as BsNativeTx[]),
+    bsGetPaginated<BsTokenTransfer>(
+      `/addresses/${address}/token-transfers`,
+      limit,
+    ).catch(() => [] as BsTokenTransfer[]),
+  ]);
+
+  for (const tx of nativeTxs) {
+    const ts = tx.timestamp ?? "";
+    const fr = (tx.from?.hash ?? "").toLowerCase();
+    const to = (tx.to?.hash ?? "").toLowerCase();
+    const valWei = BigInt(tx.value ?? 0);
+    const valEth = Number(valWei) / 1e18;
+    if (valEth === 0) continue;
+    const direction: Direction =
+      fr === to ? "self" : to === addrLo ? "in" : "out";
+    out.push({
+      hash: tx.hash ?? "",
+      timestamp: ts,
+      direction,
+      counterparty: direction === "in" ? fr : to,
+      symbol: "ETH",
+      value: valEth,
+      usd: null,
+      kind: "native",
+    });
   }
 
   // ERC20 transfers
-  try {
-    const tts = await bsGetPaginated<BsTokenTransfer>(
-      `/addresses/${address}/token-transfers`,
-      limit,
-    );
+  {
+    const tts = tokenTransfers;
     for (const tt of tts) {
       const ts = tt.timestamp ?? "";
       const fr = (tt.from?.hash ?? "").toLowerCase();
@@ -301,8 +311,6 @@ export async function getCombinedHistory(address: string, limit = 2000): Promise
         kind: "token",
       });
     }
-  } catch {
-    // ignore
   }
 
   out.sort((a, b) => (a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0));

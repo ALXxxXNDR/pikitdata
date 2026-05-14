@@ -289,7 +289,9 @@ function WalletDetailSection({
   const snapshotPromise = getWalletSnapshot(wallet.address).catch(
     () => null as WalletSnapshot | null,
   );
-  const historyPromise = getCombinedHistory(wallet.address, 2000).catch(
+  // limit 500 — 카운터파티 통계 + 활동 페이지네이션에 충분 (기존 2000은
+  // round-trip 40+ 회). default 사용.
+  const historyPromise = getCombinedHistory(wallet.address).catch(
     () => [] as Transfer[],
   );
   const alertConfigPromise = getAlertConfig(project.key, wallet.key);
