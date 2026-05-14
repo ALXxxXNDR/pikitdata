@@ -179,6 +179,7 @@ async function edgePatch(items: EdgeItem[]): Promise<void> {
       authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({ items }),
+    signal: AbortSignal.timeout(10_000),
   });
   if (!r.ok) {
     const t = await r.text();

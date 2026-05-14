@@ -53,6 +53,8 @@ async function rpcCall<T = unknown>(method: string, params: unknown[]): Promise<
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        // 5s 타임아웃 — 느린 RPC 는 다음 URL 로 failover.
+        signal: AbortSignal.timeout(5_000),
         // 서버 컴포넌트의 fetch 는 next 캐시 사용
         next: { revalidate: 30 },
       });
@@ -126,7 +128,10 @@ async function bsGet<T>(
 ): Promise<BlockscoutPaginated<T>> {
   const qs = params ? "?" + new URLSearchParams(params).toString() : "";
   const url = `${BLOCKSCOUT_BASE}${path}${qs}`;
-  const r = await fetch(url, { next: { revalidate: 30 } });
+  const r = await fetch(url, {
+    signal: AbortSignal.timeout(10_000),
+    next: { revalidate: 30 },
+  });
   if (!r.ok) throw new Error(`Blockscout ${path} HTTP ${r.status}`);
   return (await r.json()) as BlockscoutPaginated<T>;
 }
@@ -163,7 +168,10 @@ async function getEthUsd(): Promise<number> {
   const now = Date.now();
   if (ethRateCache && now - ethRateCache.ts < 60_000) return ethRateCache.value;
   try {
-    const r = await fetch(COINGECKO_ETH, { next: { revalidate: 60 } });
+    const r = await fetch(COINGECKO_ETH, {
+      signal: AbortSignal.timeout(5_000),
+      next: { revalidate: 60 },
+    });
     if (!r.ok) throw new Error("coingecko");
     const data = await r.json();
     const v = Number(data?.ethereum?.usd ?? 0);

@@ -131,6 +131,7 @@ async function sendEmail(
         subject,
         text: body,
       }),
+      signal: AbortSignal.timeout(10_000),
     });
     if (!r.ok) {
       const t = await r.text();
