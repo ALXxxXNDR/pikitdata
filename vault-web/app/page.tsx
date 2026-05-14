@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { Topbar } from "@/components/topbar";
 import { ProjectSwitcher } from "@/components/project-switcher";
 import { HeroTotal } from "@/components/hero-total";
@@ -7,6 +8,10 @@ import { ActivityList } from "@/components/activity-list";
 import { ComingSoon } from "@/components/coming-soon";
 import { LiveTimestamp } from "@/components/live-timestamp";
 import { WalletDetail } from "@/components/wallet-detail";
+import {
+  ProjectOverviewSkeleton,
+  WalletDetailSkeleton,
+} from "@/components/loading-skeleton";
 import { getAlertConfig, isKvConfigured } from "@/lib/alert-config";
 import { PROJECTS, getProject } from "@/lib/projects";
 import {
@@ -17,6 +22,7 @@ import {
 } from "@/lib/soneium";
 import type { Allocation } from "@/lib/soneium";
 import type {
+  ProjectConfig,
   TokenHolding,
   Transfer,
   WalletOption,
@@ -55,13 +61,7 @@ export default async function Page({
         />
       </section>
 
-      {project.comingSoon ? (
-        <ComingSoon project={project} />
-      ) : walletKey ? (
-        <WalletDetailSection projectKey={project.key} walletKey={walletKey} />
-      ) : (
-        <ProjectOverview projectKey={project.key} />
-      )}
+      <MainContent project={project} walletKey={walletKey} />
 
       <footer className="mt-12 flex justify-between ink-45 text-[12px]">
         <div
@@ -77,6 +77,52 @@ export default async function Page({
         <div style={{ fontFamily: "var(--font-mono)" }}>Vault — v1</div>
       </footer>
     </div>
+  );
+}
+
+/**
+ * 메인 콘텐츠 분기 — Suspense 로 wrap 해서 server-side streaming.
+ * 페이지 자체는 즉시 응답 → 헤더/스위처/푸터 painting, 데이터 의존 섹션은
+ * skeleton fallback 표시 → fetch 끝나면 자동 swap.
+ */
+function MainContent({
+  project,
+  walletKey,
+}: {
+  project: ProjectConfig;
+  walletKey: string | undefined;
+}) {
+  if (project.comingSoon) {
+    return <ComingSoon project={project} />;
+  }
+  if (walletKey) {
+    const wallet = project.wallets.find((w) => w.key === walletKey);
+    if (!wallet || !wallet.address) {
+      return (
+        <div className="bg-white border border-ink-12 rounded-[18px] p-8 mt-3 ink-60">
+          지갑 정보를 찾을 수 없습니다.
+        </div>
+      );
+    }
+    return (
+      <Suspense
+        key={`${project.key}/${walletKey}`}
+        fallback={<WalletDetailSkeleton project={project} wallet={wallet} />}
+      >
+        <WalletDetailSection
+          projectKey={project.key}
+          walletKey={walletKey}
+        />
+      </Suspense>
+    );
+  }
+  return (
+    <Suspense
+      key={project.key}
+      fallback={<ProjectOverviewSkeleton project={project} />}
+    >
+      <ProjectOverview projectKey={project.key} />
+    </Suspense>
   );
 }
 
