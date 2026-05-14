@@ -8,7 +8,7 @@ import type { ProjectConfig, WalletConfig } from "@/lib/types";
  * `filter: blur` + 중앙 spinner 로 처리.
  */
 
-function Spinner({ size = 16 }: { size?: number }) {
+export function Spinner({ size = 16 }: { size?: number }) {
   return (
     <svg
       viewBox="0 0 24 24"
@@ -41,7 +41,7 @@ function LoadingBadge() {
   );
 }
 
-function MetricSkeleton() {
+export function MetricSkeleton() {
   return (
     <div
       className="bg-white border border-ink-12 rounded-[18px] p-6 relative overflow-hidden"
@@ -73,7 +73,7 @@ function MetricSkeleton() {
   );
 }
 
-function CardSkeleton({
+export function CardSkeleton({
   minHeight = 260,
   title,
 }: {

@@ -267,7 +267,7 @@ async function ProjectOverview({ projectKey }: { projectKey: string }) {
   );
 }
 
-async function WalletDetailSection({
+function WalletDetailSection({
   projectKey,
   walletKey,
 }: {
@@ -283,18 +283,23 @@ async function WalletDetailSection({
       </div>
     );
   }
-  const [snapshot, history, alertConfig] = await Promise.all([
-    getWalletSnapshot(wallet.address).catch(() => null as WalletSnapshot | null),
-    getCombinedHistory(wallet.address, 2000).catch(() => [] as Transfer[]),
-    getAlertConfig(project.key, wallet.key),
-  ]);
+  // promise 만 생성 (await 안 함). 각 promise 는 client component 의
+  // 별도 sub-section 이 use() 로 await — 빠른 fetch (snapshot, alertConfig)
+  // 끝나면 그 section 즉시 표시, 느린 history 는 늦게 unsuspend.
+  const snapshotPromise = getWalletSnapshot(wallet.address).catch(
+    () => null as WalletSnapshot | null,
+  );
+  const historyPromise = getCombinedHistory(wallet.address, 2000).catch(
+    () => [] as Transfer[],
+  );
+  const alertConfigPromise = getAlertConfig(project.key, wallet.key);
   return (
     <WalletDetail
       project={project}
       wallet={wallet}
-      snapshot={snapshot}
-      history={history}
-      alertConfig={alertConfig}
+      snapshotPromise={snapshotPromise}
+      historyPromise={historyPromise}
+      alertConfigPromise={alertConfigPromise}
       kvConfigured={isKvConfigured()}
     />
   );

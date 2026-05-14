@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ActivityList } from "./activity-list";
 import { AlertConfigButton } from "./alert-config-button";
 import { Pagination } from "./pagination";
+import { CardSkeleton, MetricSkeleton, Spinner } from "./loading-skeleton";
 import { isEvmAddress } from "@/lib/format";
 import type { AlertConfig } from "@/lib/alert-config";
 import type {
@@ -17,32 +18,22 @@ import type {
 type Props = {
   project: ProjectConfig;
   wallet: WalletConfig;
-  snapshot: WalletSnapshot | null;
-  history: Transfer[];
-  alertConfig: AlertConfig;
+  // 각 promise 가 별도로 fetch. sub-section 별로 use() → 자기 데이터만 await.
+  // 빠른 fetch (snapshot, alertConfig) 먼저 도착하면 즉시 표시, history 는 늦게.
+  snapshotPromise: Promise<WalletSnapshot | null>;
+  historyPromise: Promise<Transfer[]>;
+  alertConfigPromise: Promise<AlertConfig>;
   kvConfigured: boolean;
 };
 
 export function WalletDetail({
   project,
   wallet,
-  snapshot,
-  history,
-  alertConfig,
+  snapshotPromise,
+  historyPromise,
+  alertConfigPromise,
   kvConfigured,
 }: Props) {
-  const totalIn = history
-    .filter((t) => t.direction === "in")
-    .reduce((s, t) => s + (t.usd ?? 0), 0);
-  const totalOut = history
-    .filter((t) => t.direction === "out")
-    .reduce((s, t) => s + (t.usd ?? 0), 0);
-  const isTreasury = wallet.pnlMode === "treasury";
-  const pnl = isTreasury ? -totalOut : totalIn - totalOut;
-  const inLabel = isTreasury ? "총 충전" : "총 입금";
-  const outLabel = isTreasury ? "총 지급" : "총 출금";
-  const pnlLabel = isTreasury ? "손익 (Owner PNL)" : "순 PNL";
-
   return (
     <>
       <div className="mt-3 flex items-center gap-3 flex-wrap">
@@ -58,13 +49,14 @@ export function WalletDetail({
         >
           {wallet.address}
         </div>
-        <AlertConfigButton
-          projectKey={project.key}
-          walletKey={wallet.key}
-          walletName={wallet.name}
-          initial={alertConfig}
-          kvConfigured={kvConfigured}
-        />
+        <Suspense fallback={<AlertButtonPlaceholder />}>
+          <AlertButtonLoader
+            project={project}
+            wallet={wallet}
+            alertConfigPromise={alertConfigPromise}
+            kvConfigured={kvConfigured}
+          />
+        </Suspense>
       </div>
 
       <h2
@@ -75,30 +67,172 @@ export function WalletDetail({
       </h2>
       <p className="ink-60 text-[14px] mt-1">{wallet.description}</p>
 
-      <section
-        className="grid gap-6 mt-6"
-        style={{ gridTemplateColumns: "repeat(4, 1fr)" }}
-      >
-        <Metric
-          label="총 USD"
-          value={`$${(snapshot?.totalUsd ?? 0).toLocaleString("en-US", {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
-          })}`}
+      <Suspense fallback={<MetricsFallback />}>
+        <MetricsLoader
+          snapshotPromise={snapshotPromise}
+          historyPromise={historyPromise}
+          wallet={wallet}
         />
-        <Metric label={inLabel} value={fmtUsd(totalIn)} sub={`${countDir(history, "in")}건`} />
-        <Metric label={outLabel} value={fmtUsd(totalOut)} sub={`${countDir(history, "out")}건`} />
-        <Metric label={pnlLabel} value={fmtUsd(pnl)} accent={pnl > 0} />
-      </section>
+      </Suspense>
 
       <section className="mt-6 grid gap-6" style={{ gridTemplateColumns: "1.4fr 1fr" }}>
-        <CounterpartySection history={history} pnlMode={wallet.pnlMode} />
-        <TokensSection snapshot={snapshot} />
+        <Suspense
+          fallback={<CardSkeleton title="카운터파티" minHeight={460} />}
+        >
+          <CounterpartyLoader
+            historyPromise={historyPromise}
+            pnlMode={wallet.pnlMode}
+          />
+        </Suspense>
+        <Suspense
+          fallback={<CardSkeleton title="보유 토큰" minHeight={460} />}
+        >
+          <TokensLoader snapshotPromise={snapshotPromise} />
+        </Suspense>
       </section>
 
-      <ActivityList items={history} />
+      <Suspense fallback={<CardSkeleton title="최근 활동" minHeight={360} />}>
+        <ActivityLoader historyPromise={historyPromise} />
+      </Suspense>
     </>
   );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Sub-section loaders — 각자 자기 promise 만 use() → 독립적 Suspense
+// ─────────────────────────────────────────────────────────────────
+
+function AlertButtonLoader({
+  project,
+  wallet,
+  alertConfigPromise,
+  kvConfigured,
+}: {
+  project: ProjectConfig;
+  wallet: WalletConfig;
+  alertConfigPromise: Promise<AlertConfig>;
+  kvConfigured: boolean;
+}) {
+  const alertConfig = use(alertConfigPromise);
+  return (
+    <AlertConfigButton
+      projectKey={project.key}
+      walletKey={wallet.key}
+      walletName={wallet.name}
+      initial={alertConfig}
+      kvConfigured={kvConfigured}
+    />
+  );
+}
+
+function AlertButtonPlaceholder() {
+  return (
+    <button
+      type="button"
+      disabled
+      aria-busy="true"
+      className="inline-flex items-center gap-2 pl-2.5 pr-3.5 py-1.5 rounded-full text-[12.5px] border border-ink-12 ink-45 cursor-default"
+      style={{ opacity: 0.65 }}
+    >
+      <Spinner size={12} />
+      <span>알림 설정</span>
+    </button>
+  );
+}
+
+function MetricsLoader({
+  snapshotPromise,
+  historyPromise,
+  wallet,
+}: {
+  snapshotPromise: Promise<WalletSnapshot | null>;
+  historyPromise: Promise<Transfer[]>;
+  wallet: WalletConfig;
+}) {
+  // snapshot + history 둘 다 필요 — 둘 중 늦은 것 기준으로 unsuspend.
+  // (총 USD 만 snapshot, 입출금/PNL 은 history. 같이 grid 라 묶음 처리.)
+  const snapshot = use(snapshotPromise);
+  const history = use(historyPromise);
+
+  const totalIn = history
+    .filter((t) => t.direction === "in")
+    .reduce((s, t) => s + (t.usd ?? 0), 0);
+  const totalOut = history
+    .filter((t) => t.direction === "out")
+    .reduce((s, t) => s + (t.usd ?? 0), 0);
+  const isTreasury = wallet.pnlMode === "treasury";
+  const pnl = isTreasury ? -totalOut : totalIn - totalOut;
+  const inLabel = isTreasury ? "총 충전" : "총 입금";
+  const outLabel = isTreasury ? "총 지급" : "총 출금";
+  const pnlLabel = isTreasury ? "손익 (Owner PNL)" : "순 PNL";
+
+  return (
+    <section
+      className="grid gap-6 mt-6"
+      style={{ gridTemplateColumns: "repeat(4, 1fr)" }}
+    >
+      <Metric
+        label="총 USD"
+        value={`$${(snapshot?.totalUsd ?? 0).toLocaleString("en-US", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })}`}
+      />
+      <Metric
+        label={inLabel}
+        value={fmtUsd(totalIn)}
+        sub={`${countDir(history, "in")}건`}
+      />
+      <Metric
+        label={outLabel}
+        value={fmtUsd(totalOut)}
+        sub={`${countDir(history, "out")}건`}
+      />
+      <Metric label={pnlLabel} value={fmtUsd(pnl)} accent={pnl > 0} />
+    </section>
+  );
+}
+
+function MetricsFallback() {
+  return (
+    <section
+      className="grid gap-6 mt-6"
+      style={{ gridTemplateColumns: "repeat(4, 1fr)" }}
+    >
+      {[1, 2, 3, 4].map((i) => (
+        <MetricSkeleton key={i} />
+      ))}
+    </section>
+  );
+}
+
+function CounterpartyLoader({
+  historyPromise,
+  pnlMode,
+}: {
+  historyPromise: Promise<Transfer[]>;
+  pnlMode: "income" | "treasury";
+}) {
+  const history = use(historyPromise);
+  return <CounterpartySection history={history} pnlMode={pnlMode} />;
+}
+
+function TokensLoader({
+  snapshotPromise,
+}: {
+  snapshotPromise: Promise<WalletSnapshot | null>;
+}) {
+  const snapshot = use(snapshotPromise);
+  return <TokensSection snapshot={snapshot} />;
+}
+
+function ActivityLoader({
+  historyPromise,
+}: {
+  historyPromise: Promise<Transfer[]>;
+}) {
+  const history = use(historyPromise);
+  return <ActivityList items={history} />;
 }
 
 function Metric({
