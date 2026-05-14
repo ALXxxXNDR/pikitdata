@@ -4,7 +4,7 @@ import { ProjectSwitcher } from "@/components/project-switcher";
 import { HeroTotal } from "@/components/hero-total";
 import { WalletsTable } from "@/components/wallets-table";
 import { AssetsList, holdingsToItems } from "@/components/assets-list";
-import { ActivityList } from "@/components/activity-list";
+import { ProgressiveActivityList } from "@/components/progressive-activity-list";
 import { ComingSoon } from "@/components/coming-soon";
 import { LiveTimestamp } from "@/components/live-timestamp";
 import { WalletDetail } from "@/components/wallet-detail";
@@ -176,17 +176,39 @@ async function ProjectOverview({ projectKey }: { projectKey: string }) {
   const project = getProject(projectKey);
   const activeWallets = project.wallets.filter((w) => w.address);
 
-  // 병렬로 snapshot + history 조회
-  const snapshots = await Promise.all(
-    activeWallets.map((w) =>
-      getWalletSnapshot(w.address).catch(() => null as WalletSnapshot | null),
+  // Phase 1 (서버 await) — snapshot + recent history. 페이지 즉시 painting.
+  //   - snapshot: 잔고 합산, Hero 큰 USD, 자산 분포, Contract 표
+  //   - recent (20 per wallet): Activity 첫 페이지, 짧은 sparkline curve
+  // Phase 2 (client 백그라운드) — full history (500 per wallet).
+  //   ProgressiveActivityList 가 useEffect 으로 await + swap.
+  const [snapshots, recentHistories] = await Promise.all([
+    Promise.all(
+      activeWallets.map((w) =>
+        getWalletSnapshot(w.address).catch(
+          () => null as WalletSnapshot | null,
+        ),
+      ),
     ),
-  );
-  const histories = await Promise.all(
+    Promise.all(
+      activeWallets.map((w) =>
+        getCombinedHistory(w.address, 20).catch(() => [] as Transfer[]),
+      ),
+    ),
+  ]);
+
+  // full history — promise 만 만들고 await 안 함. server 가 응답 시작할 때
+  // background 로 계속 fetch. client 가 ProgressiveActivityList 에서 사용.
+  const fullHistoriesPromise = Promise.all(
     activeWallets.map((w) =>
       getCombinedHistory(w.address, 500).catch(() => [] as Transfer[]),
     ),
+  ).then((arr) =>
+    arr
+      .flat()
+      .sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1))
+      .slice(0, 200),
   );
+  const histories = recentHistories;
 
   // 총합
   let totalUsd = 0;
@@ -262,7 +284,10 @@ async function ProjectOverview({ projectKey }: { projectKey: string }) {
         <AssetsList items={assetItems} allocation={allocation} />
       </section>
 
-      <ActivityList items={allRecent} />
+      <ProgressiveActivityList
+        recent={allRecent}
+        fullPromise={fullHistoriesPromise}
+      />
     </>
   );
 }
@@ -289,9 +314,14 @@ function WalletDetailSection({
   const snapshotPromise = getWalletSnapshot(wallet.address).catch(
     () => null as WalletSnapshot | null,
   );
-  // limit 500 — 카운터파티 통계 + 활동 페이지네이션에 충분 (기존 2000은
-  // round-trip 40+ 회). default 사용.
-  const historyPromise = getCombinedHistory(wallet.address).catch(
+  // Two-phase history fetch:
+  //  - recent (20): Activity 첫 페이지 — 페이지 즉시 painting
+  //  - full (500): Metric/Counterparty/페이지네이션 — 백그라운드
+  // 첫 페이지 fetch URL 은 두 호출이 동일 → Next fetch cache 가 dedupe.
+  const recentHistoryPromise = getCombinedHistory(wallet.address, 20).catch(
+    () => [] as Transfer[],
+  );
+  const fullHistoryPromise = getCombinedHistory(wallet.address, 500).catch(
     () => [] as Transfer[],
   );
   const alertConfigPromise = getAlertConfig(project.key, wallet.key);
@@ -300,7 +330,8 @@ function WalletDetailSection({
       project={project}
       wallet={wallet}
       snapshotPromise={snapshotPromise}
-      historyPromise={historyPromise}
+      recentHistoryPromise={recentHistoryPromise}
+      fullHistoryPromise={fullHistoryPromise}
       alertConfigPromise={alertConfigPromise}
       kvConfigured={isKvConfigured()}
     />

@@ -1,6 +1,13 @@
 "use client";
 
-import { Suspense, use, useEffect, useMemo, useState } from "react";
+import {
+  Suspense,
+  use,
+  useEffect,
+  useMemo,
+  useState,
+  useTransition,
+} from "react";
 import Link from "next/link";
 import { ActivityList } from "./activity-list";
 import { AlertConfigButton } from "./alert-config-button";
@@ -19,9 +26,11 @@ type Props = {
   project: ProjectConfig;
   wallet: WalletConfig;
   // 각 promise 가 별도로 fetch. sub-section 별로 use() → 자기 데이터만 await.
-  // 빠른 fetch (snapshot, alertConfig) 먼저 도착하면 즉시 표시, history 는 늦게.
   snapshotPromise: Promise<WalletSnapshot | null>;
-  historyPromise: Promise<Transfer[]>;
+  // Activity 첫 페이지용 — limit 20 의 빠른 fetch. 페이지 즉시 painting.
+  recentHistoryPromise: Promise<Transfer[]>;
+  // Metric / Counterparty / Activity 페이지네이션 — limit 500 의 느린 fetch.
+  fullHistoryPromise: Promise<Transfer[]>;
   alertConfigPromise: Promise<AlertConfig>;
   kvConfigured: boolean;
 };
@@ -30,7 +39,8 @@ export function WalletDetail({
   project,
   wallet,
   snapshotPromise,
-  historyPromise,
+  recentHistoryPromise,
+  fullHistoryPromise,
   alertConfigPromise,
   kvConfigured,
 }: Props) {
@@ -70,7 +80,7 @@ export function WalletDetail({
       <Suspense fallback={<MetricsFallback />}>
         <MetricsLoader
           snapshotPromise={snapshotPromise}
-          historyPromise={historyPromise}
+          historyPromise={fullHistoryPromise}
           wallet={wallet}
         />
       </Suspense>
@@ -80,7 +90,7 @@ export function WalletDetail({
           fallback={<CardSkeleton title="카운터파티" minHeight={460} />}
         >
           <CounterpartyLoader
-            historyPromise={historyPromise}
+            historyPromise={fullHistoryPromise}
             pnlMode={wallet.pnlMode}
           />
         </Suspense>
@@ -92,7 +102,10 @@ export function WalletDetail({
       </section>
 
       <Suspense fallback={<CardSkeleton title="최근 활동" minHeight={360} />}>
-        <ActivityLoader historyPromise={historyPromise} />
+        <ActivityLoader
+          recentHistoryPromise={recentHistoryPromise}
+          fullHistoryPromise={fullHistoryPromise}
+        />
       </Suspense>
     </>
   );
@@ -227,12 +240,33 @@ function TokensLoader({
 }
 
 function ActivityLoader({
-  historyPromise,
+  recentHistoryPromise,
+  fullHistoryPromise,
 }: {
-  historyPromise: Promise<Transfer[]>;
+  recentHistoryPromise: Promise<Transfer[]>;
+  fullHistoryPromise: Promise<Transfer[]>;
 }) {
-  const history = use(historyPromise);
-  return <ActivityList items={history} />;
+  // recent (limit 20) — 즉시 첫 페이지 painting
+  const recent = use(recentHistoryPromise);
+  const [items, setItems] = useState(recent);
+  const [, startTransition] = useTransition();
+
+  // full (limit 500) — 백그라운드 도착 시 부드럽게 swap
+  useEffect(() => {
+    let cancelled = false;
+    fullHistoryPromise.then((full) => {
+      if (cancelled) return;
+      // cache 깨짐/error 로 full 이 더 작으면 swap 안 함.
+      if (full.length < recent.length) return;
+      startTransition(() => setItems(full));
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fullHistoryPromise]);
+
+  return <ActivityList items={items} />;
 }
 
 function Metric({
