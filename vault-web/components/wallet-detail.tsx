@@ -13,7 +13,7 @@ import { ActivityList } from "./activity-list";
 import { AlertConfigButton } from "./alert-config-button";
 import { Pagination } from "./pagination";
 import { CardSkeleton, MetricSkeleton, Spinner } from "./loading-skeleton";
-import { isEvmAddress } from "@/lib/format";
+import { isEvmAddress, isTxHash } from "@/lib/format";
 import type { AlertConfig } from "@/lib/alert-config";
 import type {
   ProjectConfig,
@@ -323,6 +323,10 @@ function shortAddr(a: string): string {
   return `${a.slice(0, 6)}…${a.slice(-4)}`;
 }
 
+// 카운터파티 행이 펼쳐졌을 때 보이는 트랜잭션 row 의 데이터.
+type CpAgg = { count: number; usd: number; txs: Transfer[] };
+type CpRow = [string, CpAgg];
+
 function CounterpartySection({
   history,
   pnlMode,
@@ -333,23 +337,31 @@ function CounterpartySection({
   const [query, setQuery] = useState("");
 
   const { inAll, outAll } = useMemo(() => {
-    const inMap = new Map<string, { count: number; usd: number }>();
-    const outMap = new Map<string, { count: number; usd: number }>();
+    const inMap = new Map<string, Transfer[]>();
+    const outMap = new Map<string, Transfer[]>();
     for (const t of history) {
       const map =
         t.direction === "in" ? inMap : t.direction === "out" ? outMap : null;
       if (!map) continue;
-      const prev = map.get(t.counterparty) ?? { count: 0, usd: 0 };
-      prev.count += 1;
-      prev.usd += t.usd ?? 0;
-      map.set(t.counterparty, prev);
+      const arr = map.get(t.counterparty);
+      if (arr) arr.push(t);
+      else map.set(t.counterparty, [t]);
     }
-    const sort = (m: Map<string, { count: number; usd: number }>) =>
-      Array.from(m.entries()).sort((a, b) => b[1].usd - a[1].usd);
-    return { inAll: sort(inMap), outAll: sort(outMap) };
+    const toRows = (m: Map<string, Transfer[]>): CpRow[] =>
+      Array.from(m.entries())
+        .map(([addr, txs]): CpRow => [
+          addr,
+          {
+            count: txs.length,
+            usd: txs.reduce((s, t) => s + (t.usd ?? 0), 0),
+            txs,
+          },
+        ])
+        .sort((a, b) => b[1].usd - a[1].usd);
+    return { inAll: toRows(inMap), outAll: toRows(outMap) };
   }, [history]);
 
-  const filter = (rows: [string, { count: number; usd: number }][]) => {
+  const filter = (rows: CpRow[]): CpRow[] => {
     const q = query.trim().toLowerCase();
     if (!q) return rows;
     return rows.filter(([addr]) => addr.toLowerCase().includes(q));
@@ -439,19 +451,31 @@ function PaginatedRows({
   items,
   resetKey,
 }: {
-  items: [string, { count: number; usd: number }][];
+  items: CpRow[];
   resetKey: string;
 }) {
   const PAGE_SIZE = 10;
   const [page, setPage] = useState(0);
+  // 펼쳐진 카운터파티 주소 set — 다중 토글 가능.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // query 또는 primary/secondary 섹션이 바뀌면 page + expand 둘 다 reset.
   useEffect(() => {
     setPage(0);
+    setExpanded(new Set());
   }, [resetKey]);
+  const toggle = (addr: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(addr)) next.delete(addr);
+      else next.add(addr);
+      return next;
+    });
+  };
   const start = page * PAGE_SIZE;
   const pageItems = items.slice(start, start + PAGE_SIZE);
   return (
     <>
-      <CpRows items={pageItems} />
+      <CpRows items={pageItems} expanded={expanded} onToggle={toggle} />
       <Pagination
         page={page}
         pageSize={PAGE_SIZE}
@@ -464,59 +488,194 @@ function PaginatedRows({
 
 function CpRows({
   items,
+  expanded,
+  onToggle,
 }: {
-  items: [string, { count: number; usd: number }][];
+  items: CpRow[];
+  expanded: Set<string>;
+  onToggle: (addr: string) => void;
 }) {
   if (items.length === 0) {
     return <div className="ink-45 text-[13px] py-4">없음</div>;
   }
   return (
     <div className="flex flex-col">
-      {items.map(([addr, v]) => (
-        <div
-          key={addr}
-          className="grid items-center gap-3 py-2.5 border-b border-ink-06 last:border-b-0"
-          style={{ gridTemplateColumns: "1fr auto auto" }}
-        >
-          {isEvmAddress(addr) ? (
-            <a
-              href={`https://soneium.blockscout.com/address/${addr}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[12px] ink hover:text-[var(--color-accent)] hover:underline underline-offset-2 break-all"
-              style={{ fontFamily: "var(--font-mono)" }}
-              title="Blockscout 에서 열기"
-            >
-              {addr}
-            </a>
-          ) : (
-            <span
-              className="text-[12px] ink-60 break-all"
-              style={{ fontFamily: "var(--font-mono)" }}
-            >
-              {addr}
-            </span>
-          )}
+      {items.map(([addr, v]) => {
+        const isOpen = expanded.has(addr);
+        return (
           <div
-            className="ink-45 text-[12px]"
-            style={{ fontFamily: "var(--font-mono)" }}
+            key={addr}
+            className="border-b border-ink-06 last:border-b-0"
           >
-            {v.count}건
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => onToggle(addr)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onToggle(addr);
+                }
+              }}
+              aria-expanded={isOpen}
+              className={`grid items-center gap-3 py-2.5 cursor-pointer rounded-[8px] -mx-2 px-2 hover:bg-ink-03 ${
+                isOpen ? "bg-ink-03" : ""
+              }`}
+              style={{ gridTemplateColumns: "16px 1fr auto auto" }}
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                width="11"
+                height="11"
+                className={`ink-45 transition-transform ${
+                  isOpen ? "rotate-90" : ""
+                }`}
+                aria-hidden="true"
+              >
+                <polyline points="9 6 15 12 9 18" />
+              </svg>
+              {isEvmAddress(addr) ? (
+                <a
+                  href={`https://soneium.blockscout.com/address/${addr}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-[12px] ink hover:text-[var(--color-accent)] hover:underline underline-offset-2 break-all"
+                  style={{ fontFamily: "var(--font-mono)" }}
+                  title="Blockscout 에서 열기"
+                >
+                  {addr}
+                </a>
+              ) : (
+                <span
+                  className="text-[12px] ink-60 break-all"
+                  style={{ fontFamily: "var(--font-mono)" }}
+                >
+                  {addr}
+                </span>
+              )}
+              <div
+                className="ink-45 text-[12px]"
+                style={{ fontFamily: "var(--font-mono)" }}
+              >
+                {v.count}건
+              </div>
+              <div
+                className="text-[13px] text-right min-w-[100px]"
+                style={{ fontFamily: "var(--font-mono)" }}
+              >
+                $
+                {v.usd.toLocaleString("en-US", {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}
+              </div>
+            </div>
+            {isOpen && <TxList txs={v.txs} />}
           </div>
-          <div
-            className="text-[13px] text-right min-w-[100px]"
-            style={{ fontFamily: "var(--font-mono)" }}
-          >
-            $
-            {v.usd.toLocaleString("en-US", {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
-            })}
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
+}
+
+function TxList({ txs }: { txs: Transfer[] }) {
+  // 최신순 — history 가 시간 역순 sort 되어 있어서 그대로면 최신순.
+  return (
+    <div
+      className="px-3 py-2 mb-1 rounded-[10px] flex flex-col"
+      style={{
+        background: "color-mix(in srgb, var(--color-ink) 4%, transparent)",
+        marginLeft: 8,
+      }}
+    >
+      {txs.length === 0 ? (
+        <div className="ink-45 text-[12px] py-2">트랜잭션 없음</div>
+      ) : (
+        txs.map((t, i) => <TxRow key={t.hash + i} tx={t} />)
+      )}
+    </div>
+  );
+}
+
+function TxRow({ tx }: { tx: Transfer }) {
+  const txValid = isTxHash(tx.hash);
+  const hashShort = tx.hash
+    ? `${tx.hash.slice(0, 10)}…${tx.hash.slice(-6)}`
+    : "—";
+  const dt = new Date(tx.timestamp);
+  const valid = !Number.isNaN(dt.getTime());
+  return (
+    <div
+      className="grid items-center gap-3 py-1.5 border-b last:border-b-0"
+      style={{
+        gridTemplateColumns: "1.4fr 1fr auto auto",
+        borderColor:
+          "color-mix(in srgb, var(--color-ink) 5%, transparent)",
+      }}
+    >
+      {txValid ? (
+        <a
+          href={`https://soneium.blockscout.com/tx/${tx.hash}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="text-[11.5px] ink-60 hover:text-[var(--color-accent)] hover:underline underline-offset-2 truncate"
+          style={{ fontFamily: "var(--font-mono)" }}
+          title={tx.hash}
+        >
+          {hashShort}
+        </a>
+      ) : (
+        <span
+          className="text-[11.5px] ink-45 truncate"
+          style={{ fontFamily: "var(--font-mono)" }}
+        >
+          {hashShort}
+        </span>
+      )}
+      <span
+        className="text-[11.5px] ink-60"
+        style={{ fontFamily: "var(--font-mono)" }}
+        title={valid ? dt.toISOString() : ""}
+      >
+        {valid ? fmtTxDate(dt) : "—"}
+      </span>
+      <span
+        className="text-[12px] text-right ink-60"
+        style={{ fontFamily: "var(--font-mono)" }}
+      >
+        {tx.value.toLocaleString("en-US", {
+          maximumFractionDigits: 4,
+        })}{" "}
+        {tx.symbol}
+      </span>
+      <span
+        className="text-[12px] text-right min-w-[80px]"
+        style={{ fontFamily: "var(--font-mono)" }}
+      >
+        {tx.usd != null
+          ? `$${tx.usd.toLocaleString("en-US", {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}`
+          : "—"}
+      </span>
+    </div>
+  );
+}
+
+function fmtTxDate(d: Date): string {
+  // YYYY-MM-DD HH:mm — local time
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${y}-${m}-${day} ${hh}:${mm}`;
 }
 
 function TokensSection({ snapshot }: { snapshot: WalletSnapshot | null }) {
