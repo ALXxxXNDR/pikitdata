@@ -584,78 +584,94 @@ function CpRows({
 
 function TxList({ txs }: { txs: Transfer[] }) {
   // 최신순 — history 가 시간 역순 sort 되어 있어서 그대로면 최신순.
+  if (txs.length === 0) {
+    return (
+      <div
+        className="px-3 py-2 mb-1 rounded-[10px] ink-45 text-[12px]"
+        style={{
+          background: "color-mix(in srgb, var(--color-ink) 4%, transparent)",
+          marginLeft: 8,
+        }}
+      >
+        트랜잭션 없음
+      </div>
+    );
+  }
+  // grid 를 부모 컨테이너에 한 번만 정의 → 모든 row 가 같은 column track
+  // 공유. 각 row 는 4개 sibling 셀만 emit (React.Fragment) → 같은 column
+  // 위에서 align (USDSC 가 1 vs 20 처럼 폭 다른 amount 도 정렬됨).
   return (
     <div
-      className="px-3 py-2 mb-1 rounded-[10px] flex flex-col"
+      className="px-3 py-2 mb-1 rounded-[10px] grid items-center gap-x-3"
       style={{
         background: "color-mix(in srgb, var(--color-ink) 4%, transparent)",
         marginLeft: 8,
+        gridTemplateColumns: "1.4fr 1fr auto auto",
       }}
     >
-      {txs.length === 0 ? (
-        <div className="ink-45 text-[12px] py-2">트랜잭션 없음</div>
-      ) : (
-        txs.map((t, i) => <TxRow key={t.hash + i} tx={t} />)
-      )}
+      {txs.map((t, i) => (
+        <TxRowCells
+          key={t.hash + i}
+          tx={t}
+          isLast={i === txs.length - 1}
+        />
+      ))}
     </div>
   );
 }
 
-function TxRow({ tx }: { tx: Transfer }) {
+function TxRowCells({ tx, isLast }: { tx: Transfer; isLast: boolean }) {
   const txValid = isTxHash(tx.hash);
   const hashShort = tx.hash
     ? `${tx.hash.slice(0, 10)}…${tx.hash.slice(-6)}`
     : "—";
   const dt = new Date(tx.timestamp);
   const valid = !Number.isNaN(dt.getTime());
+  const cellBorder = isLast
+    ? undefined
+    : "1px solid color-mix(in srgb, var(--color-ink) 5%, transparent)";
+  const cellStyle: React.CSSProperties = {
+    fontFamily: "var(--font-mono)",
+    paddingTop: 6,
+    paddingBottom: 6,
+    borderBottom: cellBorder,
+  };
   return (
-    <div
-      className="grid items-center gap-3 py-1.5 border-b last:border-b-0"
-      style={{
-        gridTemplateColumns: "1.4fr 1fr auto auto",
-        borderColor:
-          "color-mix(in srgb, var(--color-ink) 5%, transparent)",
-      }}
-    >
-      {txValid ? (
-        <a
-          href={`https://soneium.blockscout.com/tx/${tx.hash}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={(e) => e.stopPropagation()}
-          className="text-[11.5px] ink-60 hover:text-[var(--color-accent)] hover:underline underline-offset-2 truncate"
-          style={{ fontFamily: "var(--font-mono)" }}
-          title={tx.hash}
-        >
-          {hashShort}
-        </a>
-      ) : (
-        <span
-          className="text-[11.5px] ink-45 truncate"
-          style={{ fontFamily: "var(--font-mono)" }}
-        >
-          {hashShort}
-        </span>
-      )}
-      <span
+    <>
+      <div style={cellStyle}>
+        {txValid ? (
+          <a
+            href={`https://soneium.blockscout.com/tx/${tx.hash}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="text-[11.5px] ink-60 hover:text-[var(--color-accent)] hover:underline underline-offset-2 truncate block"
+            title={tx.hash}
+          >
+            {hashShort}
+          </a>
+        ) : (
+          <span className="text-[11.5px] ink-45 truncate block">
+            {hashShort}
+          </span>
+        )}
+      </div>
+      <div
         className="text-[11.5px] ink-60"
-        style={{ fontFamily: "var(--font-mono)" }}
+        style={cellStyle}
         title={valid ? dt.toISOString() : ""}
       >
         {valid ? fmtTxDate(dt) : "—"}
-      </span>
-      <span
-        className="text-[12px] text-right ink-60"
-        style={{ fontFamily: "var(--font-mono)" }}
-      >
+      </div>
+      <div className="text-[12px] text-right ink-60" style={cellStyle}>
         {tx.value.toLocaleString("en-US", {
           maximumFractionDigits: 4,
         })}{" "}
         {tx.symbol}
-      </span>
-      <span
-        className="text-[12px] text-right min-w-[80px]"
-        style={{ fontFamily: "var(--font-mono)" }}
+      </div>
+      <div
+        className="text-[12px] text-right"
+        style={{ ...cellStyle, minWidth: 80 }}
       >
         {tx.usd != null
           ? `$${tx.usd.toLocaleString("en-US", {
@@ -663,8 +679,8 @@ function TxRow({ tx }: { tx: Transfer }) {
               maximumFractionDigits: 2,
             })}`
           : "—"}
-      </span>
-    </div>
+      </div>
+    </>
   );
 }
 
